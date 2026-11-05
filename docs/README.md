@@ -8,6 +8,7 @@ MediaPilot 是一个 MoonBit 原生实时音视频网关，当前聚焦实时音
 | 系统怎么分层、依赖往哪走？ | [architecture.md](architecture.md) |
 | 现在做到哪、下一步是什么？ | [roadmap.md](roadmap.md) |
 | 某个 provider 的 wire 行为是什么？ | [providers/](providers/) |
+| 某个 backend 怎么工作？ | [backends/](backends/) |
 | 为什么做了某个选择？ | [decisions/](decisions/) |
 
 ## 写作规则

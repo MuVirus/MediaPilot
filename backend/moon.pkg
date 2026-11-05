@@ -1,0 +1,26 @@
+import {
+  "moonbitlang/core/async/aqueue",
+  "moonbitlang/core/async/http",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
+  "MuVirus/MediaPilot/ports",
+  "MuVirus/MediaPilot/protocol",
+}
+
+import {
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/http",
+  "moonbitlang/core/async/socket",
+  "moonbitlang/core/encoding/utf8",
+  "MuVirus/MediaPilot/ports",
+  "MuVirus/MediaPilot/protocol",
+} for "test"
+
+options(
+  "allow-experimental-packages": [
+    "moonbitlang/core/async",
+    "moonbitlang/core/async/aqueue",
+    "moonbitlang/core/async/http",
+    "moonbitlang/core/async/socket",
+  ],
+)

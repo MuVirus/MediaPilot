@@ -45,13 +45,23 @@ P0 已验证的事实：
 
 目标：语音不只是聊天，而是能调用工具、需要授权的代理。
 
-- [ ] `BackendPort`：文本/事件输入、流式输出、工具调用、取消。
-- [ ] 一个 LLM backend + 一个 ACP backend。
-- [ ] 工具调用与权限请求进入 `task.updated` / 授权事件。
+- [x] `BackendPort`：`submit` / `cancel` / `respond_tool` / `respond_permission` / `next_event` / `close`。
+- [x] LLM backend：OpenAI 兼容 `/chat/completions`，SSE 流式输出，错误映射。
+- [ ] ACP backend：JSON-RPC over stdio，先接 `opencode acp`。
+- [ ] realtime 侧注册 `delegate_task` 工具，把工具调用转给 `BackendPort`。
+- [ ] 工具结果回注 realtime 会话并播报。
+- [ ] 权限请求进入北向事件（`task.updated` / 授权事件）。
 - [ ] 会话级授权范围（once / task / session）与超时。
 - [ ] 审计日志：谁、在哪个会话、批准了什么。
 
 退出条件：一个需要用户授权的工具调用可以完整走完“请求 → 批准 → 执行 → 播报”。
+
+P2 已验证的事实：
+
+- `qwen-audio-3.1-realtime-plus` 支持 function calling，文本和语音路径都跑通了
+  “工具调用 → 结果注入 → 播报”。
+- DashScope compatible-mode 支持 SSE 流式输出，`backend/` 能逐 delta 读取。
+- 参考项目的模型目录不含 `qwen-audio-3.1-realtime-flash`；该模型带 `tools` 会稳定失败。
 
 ## P3 — 产品化
 

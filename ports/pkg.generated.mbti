@@ -11,6 +11,15 @@ import {
 // Errors
 
 // Types and methods
+pub(all) enum BackendEvent {
+  TextDelta(text~ : String)
+  TextDone(text~ : String)
+  ToolCall(call_id~ : String, name~ : String, arguments~ : String)
+  PermissionRequest(request_id~ : String, operation~ : String, description~ : String)
+  Failed(code~ : @protocol.ErrorCode, message~ : String, retryable~ : Bool)
+  Completed
+} derive(Eq, @debug.Debug)
+
 pub(all) struct ProviderFailure {
   code : @protocol.ErrorCode
   message : String
@@ -20,6 +29,15 @@ pub(all) struct ProviderFailure {
 // Type aliases
 
 // Traits
+pub(open) trait BackendPort {
+  async fn submit(Self, String, String) -> Unit
+  async fn cancel(Self, String) -> Unit
+  async fn respond_tool(Self, String, String) -> Unit
+  async fn respond_permission(Self, String, Bool) -> Unit
+  async fn next_event(Self) -> BackendEvent?
+  async fn close(Self) -> Unit
+}
+
 pub(open) trait RealtimeProvider {
   async fn send_audio(Self, String) -> Unit
   async fn send_text(Self, String) -> Unit

@@ -1,0 +1,37 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "MuVirus/MediaPilot/backend"
+
+import {
+  "MuVirus/MediaPilot/ports",
+  "moonbitlang/core/async/aqueue",
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub let default_llm_base_url : String
+
+pub let llm_event_capacity : Int32
+
+// Errors
+
+// Types and methods
+pub struct LlmBackend {
+  config : LlmConfig
+  events : @aqueue.Queue[@ports.BackendEvent?]
+  mut closed : Bool
+  mut cancelled : Bool
+}
+pub fn LlmBackend::config(Self) -> LlmConfig
+pub fn LlmBackend::new(LlmConfig) -> Self
+pub impl @ports.BackendPort for LlmBackend
+
+pub(all) struct LlmConfig {
+  base_url : String
+  api_key : String
+  model : String
+  system_prompt : String
+} derive(Eq, @debug.Debug)
+
+// Type aliases
+
+// Traits
