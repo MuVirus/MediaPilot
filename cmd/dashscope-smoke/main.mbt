@@ -87,11 +87,19 @@ fn tone_pcm16(sample_rate : Int32, millis : Int32, freq : Double) -> Bytes {
 ///|
 /// Read events until `response.done` or `error`, reporting only shapes and
 /// transcript text. Audio payloads are counted, never printed.
-async fn collect_response(ws : @websocket.Conn, label : String) -> Unit {
+///
+/// When `cancel_after_chunks` is set, the probe sends `response.cancel` after
+/// that many audio deltas and reports whether the server stops sending audio.
+async fn collect_response(
+  ws : @websocket.Conn,
+  label : String,
+  cancel_after_chunks? : Int32,
+) -> Unit {
   let mut transcript = ""
   let mut audio_chunks = 0
   let mut audio_base64 = 0
   let mut done = false
+  let mut cancelled = false
   for i = 0; i < 200 && !done; i = i + 1 {
     match recv_text(ws, 15000) {
       None => {
@@ -114,6 +122,20 @@ async fn collect_response(ws : @websocket.Conn, label : String) -> Unit {
           match field_string(raw, "delta") {
             Some(delta) => audio_base64 = audio_base64 + delta.length()
             None => ()
+          }
+          match cancel_after_chunks {
+            Some(limit) if !cancelled && audio_chunks >= limit => {
+              ws.send_text(@realtime.encode_response_cancel().stringify())
+              println(
+                "[" +
+                label +
+                "] sent response.cancel after " +
+                audio_chunks.to_string() +
+                " chunks",
+              )
+              cancelled = true
+            }
+            _ => ()
           }
         } else if kind == "response.audio_transcript.delta" ||
           kind == "response.output_audio_transcript.delta" {
@@ -237,6 +259,13 @@ async fn main {
     ws.send_text(@realtime.encode_response_create().stringify())
     println("[smoke] sent text turn + response.create")
     collect_response(ws, "text")
+    // Interrupt probe: start a second text turn and cancel it mid-stream.
+    ws.send_text(
+      @realtime.encode_text_message("请用五句话介绍杭州。").stringify(),
+    )
+    ws.send_text(@realtime.encode_response_create().stringify())
+    println("[smoke] sent interrupt probe turn")
+    collect_response(ws, "interrupt", cancel_after_chunks=3)
     let pcm = match @env.get_env_var("MEDIAPILOT_SMOKE_PCM") {
       Some(path) if path != "" =>
         try {

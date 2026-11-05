@@ -111,6 +111,11 @@ response.done
 服务端在 `smart_turn_v2` 下会自行处理新轮次，`response.cancel` 主要用于
 客户端主动打断（例如按钮）。
 
+实测 `response.cancel` 行为：在第 3 个 `response.audio.delta` 后发送 cancel，
+服务端立即停止发送音频，随后补发 `response.audio.done`、`response.content_part.done`、
+`response.output_item.done`、`response.done`。也就是说 cancel 之后仍会收到收尾事件，
+网关必须按 `response.done` 结束本轮，不能把收尾事件当成新回复。
+
 ## 已知限制
 
 - 一个会话只有一个 response slot。并发 `response.create` 会被拒绝，

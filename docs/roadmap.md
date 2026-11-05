@@ -11,6 +11,7 @@
 - [x] `protocol/`：事件类型、JSON 编解码、能力常量，附往返测试。
 - [x] `realtime/`：`ProviderEvent` 归一化 + DashScope wire 骨架（URL、鉴权头、音频格式、事件映射）。
 - [x] 连接 DashScope，发送 16 kHz PCM，收到 24 kHz PCM。见 `cmd/dashscope-smoke` 与 [providers/dashscope.md](providers/dashscope.md)。
+- [x] 打断：`response.cancel` 后服务端停止音频并补发收尾事件。
 - [ ] 浏览器最小客户端：麦克风 → WS → 播放，能打断。
 - [ ] 记录首字延迟、端到端延迟、断线行为，写进 `docs/decisions/` 或本页。
 - [ ] 失败也要有结论：若 MoonBit async/WS 不可用，记录替代方案和影响范围。
