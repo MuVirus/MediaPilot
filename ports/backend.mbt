@@ -4,6 +4,7 @@
 /// The gateway turns these into northbound events: `TextDelta`/`TextDone`
 /// become speech, `Progress` becomes the `step` field of `task.updated`,
 /// `PermissionRequest` becomes a northbound permission prompt.
+#derive(Eq, Debug)
 pub(all) enum BackendEvent {
   /// Incremental assistant text.
   TextDelta(text~ : String)
@@ -29,7 +30,7 @@ pub(all) enum BackendEvent {
   Failed(code~ : @protocol.ErrorCode, message~ : String, retryable~ : Bool)
   /// The task finished successfully. Always the last event of a submission.
   Completed
-} derive(Eq, Debug)
+}
 
 ///|
 /// How long a remembered permission decision lasts.
@@ -37,6 +38,7 @@ pub(all) enum BackendEvent {
 /// The backend maps these onto whatever option vocabulary it has. A backend
 /// without an "always" option must fall back to `AllowOnce`; the gateway
 /// remembers the wider scope itself, so the user is not asked again either way.
+#derive(Eq, Debug)
 pub(all) enum PermissionDecision {
   /// This request only.
   AllowOnce
@@ -46,7 +48,7 @@ pub(all) enum PermissionDecision {
   AllowSession
   /// Refuse this request.
   Deny
-} derive(Eq, Debug)
+}
 
 ///|
 pub fn PermissionDecision::to_token(self : PermissionDecision) -> String {

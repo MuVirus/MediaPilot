@@ -81,7 +81,7 @@ fn tone_pcm16(sample_rate : Int32, millis : Int32, freq : Double) -> Bytes {
     let value = if sample < 0 { sample + 65536 } else { sample }
     raw.unsafe_write_uint16_le(i * 2, value.to_uint16())
   }
-  Bytes::from_fixedarray(raw)
+  Bytes::from_iter(raw.iter())
 }
 
 ///|

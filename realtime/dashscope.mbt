@@ -20,6 +20,7 @@ pub let dashscope_default_turn_detection : String = "smart_turn_v2"
 /// support them fails silently: `session.update` is accepted, then every
 /// generation ends with `status = "failed"`. So the profile is the only place
 /// that decides whether tools may be attached.
+#derive(Eq, Debug)
 pub(all) struct ModelProfile {
   model : String
   /// Default voice, or `None` when the model is unknown and the configured
@@ -27,7 +28,7 @@ pub(all) struct ModelProfile {
   voice : String?
   turn_detection : String
   supports_tools : Bool
-} derive(Eq, Debug)
+}
 
 ///|
 /// Resolve a model ID to its profile.
@@ -136,12 +137,14 @@ pub fn DashScopeProvider::auth_header(self : DashScopeProvider) -> String {
 }
 
 ///|
-pub fn DashScopeProvider::input_sample_rate(self : DashScopeProvider) -> Int32 {
+pub fn DashScopeProvider::input_sample_rate(_self : DashScopeProvider) -> Int32 {
   dashscope_input_sample_rate
 }
 
 ///|
-pub fn DashScopeProvider::output_sample_rate(self : DashScopeProvider) -> Int32 {
+pub fn DashScopeProvider::output_sample_rate(
+  _self : DashScopeProvider,
+) -> Int32 {
   dashscope_output_sample_rate
 }
 

@@ -175,11 +175,11 @@ test "assistant transcript delta and done" {
       @realtime.ProviderEvent::TranscriptPartial(role="assistant", text="hel"),
     ),
   )
-  let final = @realtime.normalize_incoming(
+  let final_event = @realtime.normalize_incoming(
     "{\"type\":\"response.audio_transcript.done\",\"transcript\":\"hello\"}",
   ).unwrap()
   assert_eq(
-    final,
+    final_event,
     Some(
       @realtime.ProviderEvent::TranscriptFinal(role="assistant", text="hello"),
     ),
@@ -188,11 +188,11 @@ test "assistant transcript delta and done" {
 
 ///|
 test "user transcription events use the user role" {
-  let final = @realtime.normalize_incoming(
+  let final_event = @realtime.normalize_incoming(
     "{\"type\":\"conversation.item.input_audio_transcription.completed\",\"transcript\":\"你好\"}",
   ).unwrap()
   assert_eq(
-    final,
+    final_event,
     Some(@realtime.ProviderEvent::TranscriptFinal(role="user", text="你好")),
   )
 }

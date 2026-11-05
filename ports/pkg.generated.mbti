@@ -11,6 +11,7 @@ import {
 // Errors
 
 // Types and methods
+#derive(Eq, @debug.Debug)
 pub(all) enum BackendEvent {
   TextDelta(text~ : String)
   TextDone(text~ : String)
@@ -19,28 +20,31 @@ pub(all) enum BackendEvent {
   PermissionRequest(request_id~ : String, operation~ : String, description~ : String)
   Failed(code~ : @protocol.ErrorCode, message~ : String, retryable~ : Bool)
   Completed
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) enum PermissionDecision {
   AllowOnce
   AllowTask
   AllowSession
   Deny
-} derive(Eq, @debug.Debug)
+}
 pub fn PermissionDecision::allows(Self) -> Bool
 pub fn PermissionDecision::from_token(String) -> Self?
 pub fn PermissionDecision::to_token(Self) -> String
 
+#derive(Eq, @debug.Debug)
 pub(all) struct ProviderFailure {
   code : @protocol.ErrorCode
   message : String
   retryable : Bool
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) enum RealtimeEvent {
   Forward(event~ : @protocol.ServerEvent)
   ToolCall(call_id~ : String, name~ : String, arguments~ : String)
-} derive(Eq, @debug.Debug)
+}
 
 // Type aliases
 

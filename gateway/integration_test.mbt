@@ -10,7 +10,6 @@ struct FakeProvider {
   background_results : Array[String]
   mut interrupted : Bool
   tool_results : Array[(String, String, Bool)]
-  mut closed : Bool
   events : @aqueue.Queue[@ports.RealtimeEvent?]
 }
 
@@ -22,7 +21,6 @@ fn FakeProvider::new() -> FakeProvider {
     background_results: [],
     interrupted: false,
     tool_results: [],
-    closed: false,
     events: @aqueue.Queue(kind=Blocking(16)),
   }
 }
@@ -68,8 +66,8 @@ pub impl @ports.RealtimeProvider for FakeProvider with fn interrupt(self) {
 }
 
 ///|
-pub impl @ports.RealtimeProvider for FakeProvider with fn close(self) {
-  self.closed = true
+pub impl @ports.RealtimeProvider for FakeProvider with fn close(_self) {
+
 }
 
 ///|

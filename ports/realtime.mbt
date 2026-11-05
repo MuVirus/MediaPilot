@@ -3,11 +3,12 @@
 ///
 /// The gateway only needs these three fields; it never inspects provider error
 /// shapes. Adapters build this from their own error type.
+#derive(Eq, Debug)
 pub(all) struct ProviderFailure {
   code : @protocol.ErrorCode
   message : String
   retryable : Bool
-} derive(Eq, Debug)
+}
 
 ///|
 /// One item read from the upstream session.
@@ -15,10 +16,11 @@ pub(all) struct ProviderFailure {
 /// Most events are forwarded to the client unchanged. A `ToolCall` is not a
 /// northbound event: the gateway decides whether to delegate it to a backend
 /// and answers with `send_tool_result`.
+#derive(Eq, Debug)
 pub(all) enum RealtimeEvent {
   Forward(event~ : @protocol.ServerEvent)
   ToolCall(call_id~ : String, name~ : String, arguments~ : String)
-} derive(Eq, Debug)
+}
 
 ///|
 /// A live upstream realtime session.

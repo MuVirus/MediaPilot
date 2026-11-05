@@ -3,7 +3,7 @@
 本页只回答一个问题：`backend/` 里的 ACP adapter 怎么把 `opencode acp` 接成
 `BackendPort`，以及它明确不做什么。
 
-验证环境：opencode `2.2.5`，ACP 协议版本 `1`，MoonBit `0.1.20261029`。
+验证环境：opencode `2.2.5`，ACP 协议版本 `1`，MoonBit `0.1.20261104`。
 
 ## 定位
 

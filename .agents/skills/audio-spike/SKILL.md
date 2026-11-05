@@ -23,7 +23,7 @@ production code.
 
 - `moonbitlang/core/async`（核心库内置，无需单独安装）—— native WebSocket server/client 可用。
 - `moonbit-community/moon_cpal@0.11.8` — enumerates input/output devices.
-- `moon` 0.1.20261029.
+- `moon` 0.1.20261104.
 
 These are probes, not guarantees. Re-verify before relying on them.
 

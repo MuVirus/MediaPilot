@@ -3,6 +3,7 @@
 ///
 /// The gateway turns these into `@protocol.ServerEvent` values by adding the
 /// session ID. Provider adapters must never return raw provider JSON.
+#derive(Eq, Debug)
 pub(all) enum ProviderEvent {
   /// The provider started a response. Adapters use this to track whether an
   /// explicit cancel is meaningful; it has no northbound representation.
@@ -16,16 +17,17 @@ pub(all) enum ProviderEvent {
   /// provider produced; the caller parses it.
   FunctionCall(call_id~ : String, name~ : String, arguments~ : String)
   Error(code~ : @protocol.ErrorCode, message~ : String, retryable~ : Bool)
-} derive(Eq, Debug)
+}
 
 ///|
+#derive(Debug, Show)
 pub(all) suberror ProviderError {
   InvalidFrame(String)
   MissingField(String)
   UnsupportedProvider(String)
   ConnectFailed(String)
   SessionRejected(String)
-} derive(Debug, Show)
+}
 
 ///|
 /// Map a provider failure to a contract error code.
@@ -63,9 +65,10 @@ pub fn ProviderError::is_retryable(self : ProviderError) -> Bool {
 
 ///|
 /// Configuration shared by realtime provider adapters.
+#derive(Eq, Debug)
 pub(all) struct ProviderConfig {
   api_key : String
   model : String
   endpoint : String
   voice : String
-} derive(Eq, Debug)
+}

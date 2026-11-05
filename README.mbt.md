@@ -19,7 +19,7 @@ MoonBit 原生的实时音视频网关，当前聚焦实时音频。浏览器负
 
 ## 快速开始
 
-需要 MoonBit `0.1.20261029` 或更新版本。
+需要 MoonBit `0.1.20261104` 或更新版本。
 
 ```sh
 moon check --target native

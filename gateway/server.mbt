@@ -340,7 +340,7 @@ pub let permission_timeout_ms : Int32 = 60000
 
 ///|
 /// A client answer to one `permission.request`.
-struct PermissionAnswer {
+priv struct PermissionAnswer {
   request_id : String
   decision : @ports.PermissionDecision
   /// `client`, `timeout`, `policy`, or `cancelled`.
@@ -349,7 +349,7 @@ struct PermissionAnswer {
 
 ///|
 /// State shared by the two pumps of one client session.
-struct SessionFlow {
+priv struct SessionFlow {
   outbound : @aqueue.Queue[@protocol.ServerEvent?]
   session_id : String
   answers : @aqueue.Queue[PermissionAnswer]
@@ -369,7 +369,7 @@ struct SessionFlow {
 
 ///|
 /// One accepted `delegate_task`, waiting for the serial task runner.
-struct TaskJob {
+priv struct TaskJob {
   task_id : String
   instruction : String
   /// Value of `SessionFlow::interrupt_generation` at acceptance.
@@ -379,10 +379,10 @@ struct TaskJob {
 ///|
 /// How one delegated task ended. The runner turns this into either a spoken
 /// background result or silence.
-enum TaskOutcome {
+priv enum TaskOutcome {
   Completed(text~ : String)
   Failed(message~ : String)
-  Cancelled(text~ : String)
+  Cancelled
 }
 
 ///|
@@ -773,7 +773,7 @@ fn tool_instruction(arguments : String) -> String? {
     Json::Object(map) =>
       match map.get("instruction") {
         Some(Json::String(text)) =>
-          if text.trim_space().is_empty() {
+          if text.trim().is_empty() {
             None
           } else {
             Some(text)
@@ -939,7 +939,7 @@ async fn tool_runner(
             provider.send_background_result(background_result_text(text))
           Failed(message~) =>
             provider.send_background_result(background_failure_text(message))
-          Cancelled(_) => ()
+          Cancelled => ()
         }
       }
     }
@@ -961,7 +961,7 @@ async fn handle_tool_call(
 ) -> TaskOutcome {
   if flow.interrupt_generation.val != generation {
     flow.task_updated(task_id, "cancelled", "", "")
-    return Cancelled(text="")
+    return Cancelled
   }
   let mut task_allow = false
   let mut step = ""
@@ -1045,7 +1045,7 @@ async fn handle_tool_call(
   let cancelled = flow.interrupt_generation.val != generation
   if cancelled {
     flow.task_updated(task_id, "cancelled", text, step)
-    Cancelled(text~)
+    Cancelled
   } else if failure != "" {
     flow.task_updated(task_id, "failed", failure, step)
     Failed(message=failure)

@@ -14,6 +14,7 @@ pub let acp_event_capacity : Int32 = 64
 ///
 /// `command` is used as-is, so on Windows it must be an executable the OS can
 /// start without a shell (`opencode.exe`, not the npm `.cmd` shim).
+#derive(Eq, Debug)
 pub(all) struct AcpConfig {
   command : String
   args : Array[String]
@@ -23,7 +24,7 @@ pub(all) struct AcpConfig {
   /// Model ID to select through `session/set_config_option`. Empty leaves the
   /// agent's own default alone.
   model : String
-} derive(Eq, Debug)
+}
 
 ///|
 /// One permission option offered by the agent.
@@ -268,9 +269,9 @@ async fn AcpBackend::ensure_started(self : AcpBackend) -> Bool {
       self.config.command,
       self.config.args,
       inherit_env=self.config.inherit_env,
-      stdin=@process.write_to_process(),
-      stdout=@process.read_from_process(),
-      stderr=@process.read_from_process(),
+      stdin=@process.FeedFromParent,
+      stdout=@process.Collect,
+      stderr=@process.Collect,
       cwd=self.config.cwd,
       no_console_window=true,
     )
@@ -895,8 +896,8 @@ async fn kill_pid(pid : Int32) -> Unit {
     let _ = @process.run(
       command,
       args,
-      stdout=@process.read_from_process(),
-      stderr=@process.read_from_process(),
+      stdout=@process.Discard,
+      stderr=@process.Discard,
     )
   } catch {
     _ => ()

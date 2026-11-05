@@ -2,7 +2,7 @@
 
 本页只回答一个问题：`backend/` 里的 LLM adapter 怎么工作，以及它不做什么。
 
-验证环境：MoonBit `0.1.20261029`，DashScope compatible-mode，
+验证环境：MoonBit `0.1.20261104`，DashScope compatible-mode，
 模型 `qwen-plus`。验证程序是 `cmd/llm-smoke`，它只打印流式 delta 和最终文本，
 不打印 key。
 

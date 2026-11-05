@@ -7,6 +7,7 @@ import {
   "moonbitlang/core/async",
   "moonbitlang/core/async/websocket",
   "moonbitlang/core/debug",
+  "moonbitlang/core/json",
 }
 
 // Values
@@ -20,29 +21,29 @@ pub let dashscope_input_sample_rate : Int32
 
 pub let dashscope_output_sample_rate : Int32
 
-pub fn encode_audio_append(String) -> Json
+pub fn encode_audio_append(String) -> @json.Json
 
-pub fn encode_audio_clear() -> Json
+pub fn encode_audio_clear() -> @json.Json
 
-pub fn encode_audio_commit() -> Json
+pub fn encode_audio_commit() -> @json.Json
 
-pub fn encode_function_output(String, String) -> Json
+pub fn encode_function_output(String, String) -> @json.Json
 
-pub fn encode_response_cancel() -> Json
+pub fn encode_response_cancel() -> @json.Json
 
-pub fn encode_response_create() -> Json
+pub fn encode_response_create() -> @json.Json
 
-pub fn encode_response_create_with_instructions(String) -> Json
+pub fn encode_response_create_with_instructions(String) -> @json.Json
 
-pub fn encode_session_update(String, String, turn_detection? : String, tools? : Json) -> Json
+pub fn encode_session_update(String, String, turn_detection? : String, tools? : @json.Json) -> @json.Json
 
-pub fn encode_text_message(String) -> Json
+pub fn encode_text_message(String) -> @json.Json
 
-pub fn function_tool(String, String, Json) -> Json
+pub fn function_tool(String, String, @json.Json) -> @json.Json
 
 pub fn merge_partial(String, String, String) -> String
 
-pub fn normalize_event(Json) -> Result[ProviderEvent?, ProviderError]
+pub fn normalize_event(@json.Json) -> Result[ProviderEvent?, ProviderError]
 
 pub fn normalize_incoming(String) -> Result[ProviderEvent?, ProviderError]
 
@@ -51,13 +52,14 @@ pub fn resolve_model_profile(String) -> ModelProfile
 pub fn to_server_event(String, ProviderEvent) -> @protocol.ServerEvent?
 
 // Errors
+#derive(Show, @debug.Debug)
 pub(all) suberror ProviderError {
   InvalidFrame(String)
   MissingField(String)
   UnsupportedProvider(String)
   ConnectFailed(String)
   SessionRejected(String)
-} derive(Show, @debug.Debug)
+}
 pub fn ProviderError::is_retryable(Self) -> Bool
 pub fn ProviderError::to_error_code(Self) -> @protocol.ErrorCode
 
@@ -72,7 +74,7 @@ pub fn DashScopeProvider::input_sample_rate(Self) -> Int32
 pub fn DashScopeProvider::new(ProviderConfig) -> Self
 pub fn DashScopeProvider::output_sample_rate(Self) -> Int32
 pub fn DashScopeProvider::profile(Self) -> ModelProfile
-pub fn DashScopeProvider::session_update(Self, String, turn_detection? : String, tools? : Json) -> Json
+pub fn DashScopeProvider::session_update(Self, String, turn_detection? : String, tools? : @json.Json) -> @json.Json
 pub fn DashScopeProvider::voice(Self) -> String
 
 pub struct DashScopeSession {
@@ -90,7 +92,7 @@ pub async fn DashScopeSession::close(Self) -> Unit
 pub fn DashScopeSession::input_sample_rate(Self) -> Int32
 pub async fn DashScopeSession::interrupt(Self) -> Unit raise ProviderError
 pub async fn DashScopeSession::next_event(Self) -> @ports.RealtimeEvent?
-pub async fn DashScopeSession::open(ProviderConfig, String, String, tools? : Json) -> Self raise ProviderError
+pub async fn DashScopeSession::open(ProviderConfig, String, String, tools? : @json.Json) -> Self raise ProviderError
 pub fn DashScopeSession::output_sample_rate(Self) -> Int32
 pub async fn DashScopeSession::send_audio(Self, String) -> Unit raise ProviderError
 pub async fn DashScopeSession::send_background_result(Self, String) -> Unit raise ProviderError
@@ -98,20 +100,23 @@ pub async fn DashScopeSession::send_text(Self, String) -> Unit raise ProviderErr
 pub async fn DashScopeSession::send_tool_result(Self, String, String, Bool) -> Unit raise ProviderError
 pub impl @ports.RealtimeProvider for DashScopeSession
 
+#derive(Eq, @debug.Debug)
 pub(all) struct ModelProfile {
   model : String
   voice : String?
   turn_detection : String
   supports_tools : Bool
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) struct ProviderConfig {
   api_key : String
   model : String
   endpoint : String
   voice : String
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) enum ProviderEvent {
   ResponseStarted
   AudioDelta(delta~ : String, sample_rate~ : Int32)
@@ -121,7 +126,7 @@ pub(all) enum ProviderEvent {
   TurnComplete
   FunctionCall(call_id~ : String, name~ : String, arguments~ : String)
   Error(code~ : @protocol.ErrorCode, message~ : String, retryable~ : Bool)
-} derive(Eq, @debug.Debug)
+}
 
 // Type aliases
 

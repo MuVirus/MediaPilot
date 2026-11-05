@@ -1,6 +1,6 @@
 ///|
 fn make_object(fields : Array[(String, Json)]) -> Json {
-  let map : Map[String, Json] = {}
+  let map : Map[String, Json] = Map([])
   for field in fields {
     map.set(field.0, field.1)
   }

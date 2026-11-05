@@ -1,11 +1,12 @@
 ///|
 /// Configuration for an OpenAI-compatible chat-completions backend.
+#derive(Eq, Debug)
 pub(all) struct LlmConfig {
   base_url : String
   api_key : String
   model : String
   system_prompt : String
-} derive(Eq, Debug)
+}
 
 ///|
 /// DashScope exposes an OpenAI-compatible endpoint, so the same adapter works
@@ -47,7 +48,7 @@ pub fn LlmBackend::config(self : LlmBackend) -> LlmConfig {
 
 ///|
 fn chat_url(base_url : String) -> String {
-  let trimmed = base_url.trim_end().to_string()
+  let trimmed = base_url.trim_end().to_owned()
   if trimmed.has_suffix("/chat/completions") {
     trimmed
   } else {
@@ -247,7 +248,7 @@ async fn LlmBackend::submit(
     match line {
       None => done = true
       Some(raw) => {
-        let line = raw.trim_end().to_string()
+        let line = raw.trim_end().to_owned()
         if line == "" || line.has_prefix(":") {
           continue
         }

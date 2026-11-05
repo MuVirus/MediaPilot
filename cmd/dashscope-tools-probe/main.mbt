@@ -133,7 +133,7 @@ fn truncate(text : String, limit : Int32) -> String {
   if text.length() <= limit {
     text
   } else {
-    text[:limit].to_string() + "…(" + text.length().to_string() + " chars)"
+    text[:limit].to_owned() + "…(" + text.length().to_string() + " chars)"
   }
 }
 

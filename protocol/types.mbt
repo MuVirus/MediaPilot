@@ -55,6 +55,7 @@ pub fn is_compatible_version(version : String) -> Bool {
 ///|
 /// Stable error codes. Unknown values are preserved so a newer peer is not
 /// forced to drop information.
+#derive(Eq, Debug)
 pub(all) enum ErrorCode {
   HandshakeRequired
   UnsupportedVersion
@@ -65,7 +66,7 @@ pub(all) enum ErrorCode {
   SessionLimit
   InternalError
   Unknown(String)
-} derive(Eq, Debug)
+}
 
 ///|
 pub fn ErrorCode::to_code(self : ErrorCode) -> String {
@@ -99,6 +100,7 @@ pub fn ErrorCode::from_code(code : String) -> ErrorCode {
 
 ///|
 /// An event sent by a client over `WS /api/realtime`.
+#derive(Eq, Debug)
 pub(all) enum ClientEvent {
   Hello(
     request_id~ : String,
@@ -118,10 +120,11 @@ pub(all) enum ClientEvent {
   PermissionRespond(request_id~ : String, decision~ : String)
   Interrupt
   Close
-} derive(Eq, Debug)
+}
 
 ///|
 /// An event sent by the gateway over `WS /api/realtime`.
+#derive(Eq, Debug)
 pub(all) enum ServerEvent {
   Ready(
     request_id~ : String,
@@ -174,12 +177,13 @@ pub(all) enum ServerEvent {
     source~ : String
   )
   Error(code~ : ErrorCode, message~ : String, retryable~ : Bool)
-} derive(Eq, Debug)
+}
 
 ///|
+#derive(Debug, Show)
 pub(all) suberror ProtocolError {
   InvalidJson(String)
   MissingField(String)
   InvalidField(String, String)
   UnsupportedVersion(String)
-} derive(Debug, Show)
+}

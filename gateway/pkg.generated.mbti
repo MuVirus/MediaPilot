@@ -4,14 +4,15 @@ package "MuVirus/MediaPilot/gateway"
 import {
   "MuVirus/MediaPilot/ports",
   "moonbitlang/core/async/http",
+  "moonbitlang/core/json",
 }
 
 // Values
-pub fn delegate_task_tool() -> Json
+pub fn delegate_task_tool() -> @json.Json
 
 pub fn health_json() -> String
 
-pub fn health_payload() -> Json
+pub fn health_payload() -> @json.Json
 
 pub fn negotiate_capabilities(Array[String]) -> Array[String]
 
@@ -19,24 +20,17 @@ pub let outbound_capacity : Int32
 
 pub let permission_timeout_ms : Int32
 
-pub async fn run_gateway(String, async (String, Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String) -> Unit
+pub async fn run_gateway(String, async (String, @json.Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String) -> Unit
 
-pub async fn serve(@http.Server, async (String, Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String) -> Unit
+pub async fn serve(@http.Server, async (String, @json.Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String) -> Unit
 
 // Errors
 
 // Types and methods
-type PermissionAnswer
-
-type SessionFlow
-
-type TaskJob
-
-type TaskOutcome
 
 // Type aliases
 pub type BackendFactory = async (String) -> Result[&@ports.BackendPort, @ports.ProviderFailure]
 
-pub type ProviderFactory = async (String, Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure]
+pub type ProviderFactory = async (String, @json.Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure]
 
 // Traits

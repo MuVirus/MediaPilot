@@ -3,6 +3,7 @@ package "MuVirus/MediaPilot/protocol"
 
 import {
   "moonbitlang/core/debug",
+  "moonbitlang/core/json",
 }
 
 // Values
@@ -28,11 +29,11 @@ pub fn decode_client_event(String) -> Result[ClientEvent?, ProtocolError]
 
 pub fn decode_server_event(String) -> Result[ServerEvent?, ProtocolError]
 
-pub fn encode_client_event(ClientEvent) -> Json
+pub fn encode_client_event(ClientEvent) -> @json.Json
 
 pub fn encode_client_event_string(ClientEvent) -> String
 
-pub fn encode_server_event(ServerEvent) -> Json
+pub fn encode_server_event(ServerEvent) -> @json.Json
 
 pub fn encode_server_event_string(ServerEvent) -> String
 
@@ -41,14 +42,16 @@ pub fn is_compatible_version(String) -> Bool
 pub let protocol_version : String
 
 // Errors
+#derive(Show, @debug.Debug)
 pub(all) suberror ProtocolError {
   InvalidJson(String)
   MissingField(String)
   InvalidField(String, String)
   UnsupportedVersion(String)
-} derive(Show, @debug.Debug)
+}
 
 // Types and methods
+#derive(Eq, @debug.Debug)
 pub(all) enum ClientEvent {
   Hello(request_id~ : String, protocol_version~ : String, capabilities~ : Array[String])
   AudioAppend(data~ : String, format~ : String, sample_rate~ : Int32, channels~ : Int32)
@@ -57,8 +60,9 @@ pub(all) enum ClientEvent {
   PermissionRespond(request_id~ : String, decision~ : String)
   Interrupt
   Close
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) enum ErrorCode {
   HandshakeRequired
   UnsupportedVersion
@@ -69,10 +73,11 @@ pub(all) enum ErrorCode {
   SessionLimit
   InternalError
   Unknown(String)
-} derive(Eq, @debug.Debug)
+}
 pub fn ErrorCode::from_code(String) -> Self
 pub fn ErrorCode::to_code(Self) -> String
 
+#derive(Eq, @debug.Debug)
 pub(all) enum ServerEvent {
   Ready(request_id~ : String, session_id~ : String, protocol_version~ : String, capabilities~ : Array[String])
   TranscriptPartial(session_id~ : String, role~ : String, text~ : String)
@@ -83,7 +88,7 @@ pub(all) enum ServerEvent {
   PermissionRequest(session_id~ : String, request_id~ : String, task_id~ : String, operation~ : String, description~ : String, timeout_ms~ : Int32)
   PermissionResolved(session_id~ : String, request_id~ : String, decision~ : String, source~ : String)
   Error(code~ : ErrorCode, message~ : String, retryable~ : Bool)
-} derive(Eq, @debug.Debug)
+}
 
 // Type aliases
 

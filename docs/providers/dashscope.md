@@ -2,7 +2,7 @@
 
 本页只回答一个问题：DashScope Realtime 的 wire 行为是什么，以及 `realtime/` 如何映射它。
 
-验证环境：MoonBit `0.1.20261029`，Windows，端点
+验证环境：MoonBit `0.1.20261104`，Windows，端点
 `wss://dashscope.aliyuncs.com/api-ws/v1/realtime`。验证程序是
 `cmd/dashscope-smoke`（音频往返）和 `cmd/dashscope-tools-probe`（function calling），
 它们只打印事件类型、工具参数和转写文本，不打印 key 和音频内容。
