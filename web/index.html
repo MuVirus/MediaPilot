@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MediaPilot</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main>
+      <h1>MediaPilot</h1>
+      <p class="hint">
+        参考客户端：麦克风 → 网关 → DashScope Realtime → 播放。需要 Chrome 或
+        Edge，且页面必须通过 <code>http://127.0.0.1</code> 访问。
+      </p>
+
+      <div class="controls">
+        <button id="start" type="button">开始</button>
+        <button id="stop" type="button" disabled>停止</button>
+        <button id="interrupt" type="button" disabled>打断</button>
+      </div>
+
+      <p id="status" class="status">未连接</p>
+
+      <section>
+        <h2>对话</h2>
+        <div id="transcript" class="transcript"></div>
+      </section>
+
+      <section>
+        <h2>事件</h2>
+        <pre id="log" class="log"></pre>
+      </section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

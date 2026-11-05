@@ -14,14 +14,21 @@ pub let outbound_capacity : Int32 = 256
 
 ///|
 /// Start the gateway and serve until the process is stopped.
+///
+/// `static_root` is the directory holding the browser client. When omitted,
+/// only the API routes are served.
 pub async fn run_gateway(
   bind : String,
   open_provider : ProviderFactory,
+  static_root? : String,
 ) -> Unit {
   let addr = @socket.Addr::parse(bind)
   let server = @http.Server(addr)
   println("[gateway] listening on " + bind)
-  serve(server, open_provider)
+  match static_root {
+    Some(root) => serve(server, open_provider, static_root=root)
+    None => serve(server, open_provider)
+  }
 }
 
 ///|
@@ -30,42 +37,96 @@ pub async fn run_gateway(
 pub async fn serve(
   server : @http.Server,
   open_provider : ProviderFactory,
+  static_root? : String,
 ) -> Unit {
   server.run_forever((request, conn) => {
     match (request.meth, request.path) {
       (Get, "/api/health") => handle_health(conn)
       (Get, "/api/realtime") => handle_realtime(request, conn, open_provider)
+      (Get, path) =>
+        match static_root {
+          Some(root) => handle_static(conn, root, path)
+          None => handle_not_found(conn)
+        }
       _ => handle_not_found(conn)
     }
   })
 }
 
 ///|
-async fn handle_health(conn : @http.ServerConnection) -> Unit {
-  let body = health_json()
+/// Byte length, not UTF-16 code units: `Content-Length` counts bytes.
+fn byte_length(text : String) -> Int32 {
+  @utf8.encode(text).length()
+}
+
+///|
+async fn respond(
+  conn : @http.ServerConnection,
+  code : Int32,
+  reason : String,
+  content_type : String,
+  body : String,
+) -> Unit {
   conn.send_response(
-    200,
-    "OK",
+    code,
+    reason,
     extra_headers=Map([
-      (@http.CaseInsensitiveString("Content-Type"), "application/json"),
-      (@http.CaseInsensitiveString("Content-Length"), body.length().to_string()),
+      (@http.CaseInsensitiveString("Content-Type"), content_type),
+      (
+        @http.CaseInsensitiveString("Content-Length"),
+        byte_length(body).to_string(),
+      ),
     ]),
   )
   conn.text.write(body)
 }
 
 ///|
+async fn handle_health(conn : @http.ServerConnection) -> Unit {
+  respond(conn, 200, "OK", "application/json", health_json())
+}
+
+///|
 async fn handle_not_found(conn : @http.ServerConnection) -> Unit {
-  let body = "{\"error\":\"not_found\"}"
-  conn.send_response(
-    404,
-    "NotFound",
-    extra_headers=Map([
-      (@http.CaseInsensitiveString("Content-Type"), "application/json"),
-      (@http.CaseInsensitiveString("Content-Length"), body.length().to_string()),
-    ]),
+  respond(
+    conn, 404, "NotFound", "application/json", "{\"error\":\"not_found\"}",
   )
-  conn.text.write(body)
+}
+
+///|
+/// Static files are an explicit allowlist, so a request path can never escape
+/// `static_root`.
+fn static_file(path : String) -> (String, String)? {
+  match path {
+    "/" | "/index.html" => Some(("index.html", "text/html; charset=utf-8"))
+    "/app.js" => Some(("app.js", "text/javascript; charset=utf-8"))
+    "/pcm-worklet.js" =>
+      Some(("pcm-worklet.js", "text/javascript; charset=utf-8"))
+    "/style.css" => Some(("style.css", "text/css; charset=utf-8"))
+    _ => None
+  }
+}
+
+///|
+async fn handle_static(
+  conn : @http.ServerConnection,
+  root : String,
+  path : String,
+) -> Unit {
+  let (name, content_type) = match static_file(path) {
+    Some(entry) => entry
+    None => {
+      handle_not_found(conn)
+      return
+    }
+  }
+  let body = @fs.read_text(root + "/" + name) catch {
+    _ => {
+      handle_not_found(conn)
+      return
+    }
+  }
+  respond(conn, 200, "OK", content_type, body)
 }
 
 ///|

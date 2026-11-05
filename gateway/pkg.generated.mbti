@@ -15,9 +15,9 @@ pub fn negotiate_capabilities(Array[String]) -> Array[String]
 
 pub let outbound_capacity : Int32
 
-pub async fn run_gateway(String, async (String) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure]) -> Unit
+pub async fn run_gateway(String, async (String) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], static_root? : String) -> Unit
 
-pub async fn serve(@http.Server, async (String) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure]) -> Unit
+pub async fn serve(@http.Server, async (String) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], static_root? : String) -> Unit
 
 // Errors
 

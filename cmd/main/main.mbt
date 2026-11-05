@@ -32,8 +32,10 @@ async fn main {
   }
   let bind = env_or("MEDIAPILOT_BIND", "127.0.0.1:8787")
   let instructions = env_or("MEDIAPILOT_INSTRUCTIONS", default_instructions)
+  let static_root = env_or("MEDIAPILOT_WEB_ROOT", "web")
   println("[gateway] model=" + config.model)
   println("[gateway] voice=" + config.voice)
+  println("[gateway] web=" + static_root)
   let open_provider : @gateway.ProviderFactory = async fn(session_id) {
     let session = @realtime.DashScopeSession::open(
       config, session_id, instructions,
@@ -47,5 +49,5 @@ async fn main {
     }
     Ok(session as &@ports.RealtimeProvider)
   }
-  @gateway.run_gateway(bind, open_provider)
+  @gateway.run_gateway(bind, open_provider, static_root~)
 }

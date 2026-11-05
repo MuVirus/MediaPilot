@@ -12,7 +12,7 @@
 - [x] `realtime/`：`ProviderEvent` 归一化 + DashScope wire 骨架（URL、鉴权头、音频格式、事件映射）。
 - [x] 连接 DashScope，发送 16 kHz PCM，收到 24 kHz PCM。见 `cmd/dashscope-smoke` 与 [providers/dashscope.md](providers/dashscope.md)。
 - [x] 打断：`response.cancel` 后服务端停止音频并补发收尾事件。
-- [ ] 浏览器最小客户端：麦克风 → WS → 播放，能打断。
+- [x] 浏览器最小客户端：麦克风 → WS → 播放，能打断。见 `web/`。
 - [ ] 记录首字延迟、端到端延迟、断线行为，写进 `docs/decisions/` 或本页。
 - [ ] 失败也要有结论：若 MoonBit async/WS 不可用，记录替代方案和影响范围。
 
@@ -32,8 +32,9 @@ P0 已验证的事实：
 - [x] 握手、能力协商、错误码按 `docs/contract.md` 实现。
 - [x] 会话生命周期、上游断线处理、背压上限（有界出站队列）。
 - [x] 契约测试：事件 schema、握手、未知事件忽略、错误码映射。
-- [ ] 静态客户端托管。
-- [ ] 浏览器客户端作为参考实现，覆盖采集、播放、打断、重连。
+- [x] 静态客户端托管（`web/`，显式白名单，无路径穿越）。
+- [x] 浏览器客户端作为参考实现，覆盖采集、播放、打断。
+- [ ] 浏览器客户端重连与断线提示。
 
 退出条件：`contract.md` 中 P1 相关承诺全部有 `Locked by` 测试；
 第三方按文档能写一个最小客户端。

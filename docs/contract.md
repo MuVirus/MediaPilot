@@ -50,6 +50,12 @@
 一条连接承载一个会话。文本帧是 JSON；音频只出现在 JSON 的 `data` 字段里（base64），
 不混用二进制帧，保证浏览器和原生客户端行为一致。
 
+### `GET /`
+
+参考浏览器客户端。网关只托管 `web/` 下的固定文件（`index.html`、`app.js`、
+`pcm-worklet.js`、`style.css`），其他路径返回 404。静态资源不是契约的一部分，
+客户端可以完全不用它。
+
 ## 握手
 
 客户端连接后必须首先发送：
@@ -58,7 +64,7 @@
 {
   "type": "session.hello",
   "requestId": "c-1",
-  "protocolVersion": "0.1.0",
+  "protocolVersion": "0.2.0",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"]
 }
 ```
@@ -70,7 +76,7 @@
   "type": "session.ready",
   "requestId": "c-1",
   "sessionId": "s-1",
-  "protocolVersion": "0.1.0",
+  "protocolVersion": "0.2.0",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"]
 }
 ```

@@ -20,21 +20,34 @@ MoonBit 原生的实时音视频网关，当前聚焦实时音频。浏览器负
 ```sh
 moon check --target native
 moon test --target native
-moon run cmd/main
 ```
 
-目前 `cmd/main` 只打印 `Hello`。P0 完成后会启动网关并托管浏览器客户端。
-
-### 真实连接 DashScope
+### 运行网关与浏览器客户端
 
 ```sh
 Copy-Item .env.example .env.local   # 填入 DASHSCOPE_API_KEY
+moon run cmd/main --target native
+```
+
+然后打开 <http://127.0.0.1:8787/>，点“开始”授权麦克风即可对话。页面必须通过
+`127.0.0.1` 访问，否则浏览器不会授予麦克风权限。
+
+网关提供：
+
+- `GET /api/health` — 协议版本与能力列表
+- `WS /api/realtime` — 实时音频会话
+- `GET /` — 参考浏览器客户端（`web/`）
+
+### 真实连接 DashScope（无浏览器）
+
+```sh
 moon run cmd/dashscope-smoke --target native
 ```
 
-`cmd/dashscope-smoke` 会连接 DashScope、发送 `session.update`、跑一次文本轮次和一次
-音频轮次，只打印事件类型与转写文本，不打印 key 和音频内容。环境变量需要先注入到
-进程里（例如在 PowerShell 中读取 `.env.local` 后 `Set-Item Env:`）。
+`cmd/dashscope-smoke` 会连接 DashScope、发送 `session.update`、跑一次文本轮次、
+一次打断探测和一次音频轮次，只打印事件类型与转写文本，不打印 key 和音频内容。
+环境变量需要先注入到进程里（例如在 PowerShell 中读取 `.env.local` 后
+`Set-Item Env:`）。
 
 ## 设计来源
 
