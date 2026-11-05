@@ -21,6 +21,7 @@ P0 已验证的事实：
 - `moonbitlang/core/async/websocket` 在 Windows 上可以完成 `wss://` 连接、TLS 握手和文本帧收发。
 - 一次完整语音轮次（VAD → 用户转写 → 助手音频 + 转写）在 MoonBit 进程内跑通，无 Node/Python 中间层。
 - 上行必须按实时节奏发送；一次性灌入整段音频时服务端 VAD 不会判定轮次结束。
+- 浏览器参考客户端在 Edge headless + 假麦克风下完成握手、采集、文本轮次、10.6s 下行音频与转写渲染。
 
 退出条件：本机一次完整“说话 → 转写 → 回复音频”跑通，且不依赖 Node/Python 中间层。
 

@@ -30,6 +30,7 @@ let nextPlayAt = 0;
 const activeSources = new Set();
 let assistantLine = null;
 let userLine = null;
+let receivedAudioSeconds = 0;
 
 function log(message) {
   const line = `${new Date().toLocaleTimeString()} ${message}`;
@@ -38,6 +39,11 @@ function log(message) {
 
 function setStatus(text) {
   els.status.textContent = text;
+}
+
+function refreshStatus() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  setStatus(`已连接 · 已接收 ${receivedAudioSeconds.toFixed(1)}s 音频`);
 }
 
 function setRunning(running) {
@@ -134,12 +140,18 @@ function handleServerEvent(event) {
     case "transcript.final":
       lineFor(event.role).textContent = event.text;
       break;
-    case "audio.delta":
-      playPcm16(base64ToBytes(event.data));
+    case "audio.delta": {
+      const bytes = base64ToBytes(event.data);
+      receivedAudioSeconds += bytes.byteLength / 2 / OUTPUT_RATE;
+      playPcm16(bytes);
+      refreshStatus();
       break;
+    }
     case "playback.clear":
       log(`playback.clear reason=${event.reason}`);
       stopPlayback();
+      // A new user turn starts here, so the next transcript lines are new.
+      resetLines();
       break;
     case "error":
       log(`error ${event.code}: ${event.message}`);
@@ -173,9 +185,12 @@ async function startCapture() {
     });
   };
   sourceNode.connect(workletNode);
-  // The worklet does not need to reach the speakers, but some browsers only
-  // pull audio from a node that is connected to the graph.
-  workletNode.connect(captureContext.destination);
+  // The worklet must reach a destination for the graph to pull audio, but it
+  // must not be audible. A zero-gain node keeps it silent.
+  const mute = captureContext.createGain();
+  mute.gain.value = 0;
+  workletNode.connect(mute);
+  mute.connect(captureContext.destination);
 }
 
 async function start() {
@@ -273,3 +288,7 @@ els.interrupt.addEventListener("click", () => {
   send({ type: "session.interrupt" });
   log("interrupt sent");
 });
+
+// Debug hook for the headless smoke test and for manual poking in devtools.
+// Not part of the gateway contract.
+window.mediapilot = { send, stopPlayback };
