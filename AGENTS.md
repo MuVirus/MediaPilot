@@ -26,14 +26,17 @@ transport, and rendering. Do not add these speculatively.
 | Package | Owns | May depend on |
 | --- | --- | --- |
 | `protocol/` | Wire types, JSON codec, version and capability constants | core only |
-| `gateway/` | HTTP/WS server, session lifecycle, event routing | `protocol/` |
-| `realtime/` | Provider adapters (DashScope, OpenAI, Gemini, …) | `protocol/` |
-| `backend/` | Agent backends behind `BackendPort` (LLM, ACP, MCP) | `protocol/` |
+| `ports/` | Traits that connect `gateway/` to providers and backends | `protocol/` |
+| `gateway/` | HTTP/WS server, session lifecycle, event routing | `protocol/`, `ports/` |
+| `realtime/` | Provider adapters (DashScope, OpenAI, Gemini, …) | `protocol/`, `ports/` |
+| `backend/` | Agent backends behind `BackendPort` (LLM, ACP, MCP) | `protocol/`, `ports/` |
 | `audio/` | Capture, playback, resampling | core only |
 | `cmd/` | Executables and wiring | anything above |
 
 Dependencies point downward. `protocol/` must not import a transport, a
-provider, or a backend. `cmd/` contains wiring only; no business logic.
+provider, or a backend. `gateway/` and `realtime/` are siblings: they never
+import each other, only `ports/`. `cmd/` contains wiring only; no business
+logic.
 
 Audio and video share one session and event model. There is no `video/` package
 until P4; do not add one or pull in a codec dependency early.

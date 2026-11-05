@@ -42,7 +42,7 @@ pub(all) suberror ProtocolError {
   MissingField(String)
   InvalidField(String, String)
   UnsupportedVersion(String)
-} derive(@debug.Debug)
+} derive(Show, @debug.Debug)
 
 // Types and methods
 pub(all) enum ClientEvent {

@@ -2,7 +2,9 @@
 package "MuVirus/MediaPilot/realtime"
 
 import {
+  "MuVirus/MediaPilot/ports",
   "MuVirus/MediaPilot/protocol",
+  "moonbitlang/core/async/websocket",
   "moonbitlang/core/debug",
 }
 
@@ -33,12 +35,18 @@ pub fn normalize_event(Json) -> Result[ProviderEvent?, ProviderError]
 
 pub fn normalize_incoming(String) -> Result[ProviderEvent?, ProviderError]
 
+pub fn to_server_event(String, ProviderEvent) -> @protocol.ServerEvent?
+
 // Errors
 pub(all) suberror ProviderError {
   InvalidFrame(String)
   MissingField(String)
   UnsupportedProvider(String)
-} derive(@debug.Debug)
+  ConnectFailed(String)
+  SessionRejected(String)
+} derive(Show, @debug.Debug)
+pub fn ProviderError::is_retryable(Self) -> Bool
+pub fn ProviderError::to_error_code(Self) -> @protocol.ErrorCode
 
 // Types and methods
 pub struct DashScopeProvider {
@@ -51,6 +59,23 @@ pub fn DashScopeProvider::input_sample_rate(Self) -> Int32
 pub fn DashScopeProvider::new(ProviderConfig) -> Self
 pub fn DashScopeProvider::output_sample_rate(Self) -> Int32
 pub fn DashScopeProvider::session_update(Self, String, turn_detection? : String) -> Json
+
+pub struct DashScopeSession {
+  ws : @websocket.Conn
+  session_id : String
+  input_rate : Int32
+  output_rate : Int32
+  mut closed : Bool
+}
+pub async fn DashScopeSession::close(Self) -> Unit
+pub fn DashScopeSession::input_sample_rate(Self) -> Int32
+pub async fn DashScopeSession::interrupt(Self) -> Unit raise ProviderError
+pub async fn DashScopeSession::next_event(Self) -> @protocol.ServerEvent?
+pub async fn DashScopeSession::open(ProviderConfig, String, String) -> Self raise ProviderError
+pub fn DashScopeSession::output_sample_rate(Self) -> Int32
+pub async fn DashScopeSession::send_audio(Self, String) -> Unit raise ProviderError
+pub async fn DashScopeSession::send_text(Self, String) -> Unit raise ProviderError
+pub impl @ports.RealtimeProvider for DashScopeSession
 
 pub(all) struct ProviderConfig {
   api_key : String

@@ -1,0 +1,353 @@
+///|
+/// Opens one upstream session for a client session.
+///
+/// `cmd/` supplies this so `gateway/` never imports a provider package.
+pub type ProviderFactory = async (String) -> Result[
+  &@ports.RealtimeProvider,
+  @ports.ProviderFailure,
+]
+
+///|
+/// How many northbound events may queue before the provider reader blocks.
+/// This is the backpressure bound from `docs/architecture.md`.
+pub let outbound_capacity : Int32 = 256
+
+///|
+/// Start the gateway and serve until the process is stopped.
+pub async fn run_gateway(
+  bind : String,
+  open_provider : ProviderFactory,
+) -> Unit {
+  let addr = @socket.Addr::parse(bind)
+  let server = @http.Server(addr)
+  println("[gateway] listening on " + bind)
+  serve(server, open_provider)
+}
+
+///|
+/// Serve on an already-bound server. Tests use this with port 0 so they can
+/// read the assigned port before connecting.
+pub async fn serve(
+  server : @http.Server,
+  open_provider : ProviderFactory,
+) -> Unit {
+  server.run_forever((request, conn) => {
+    match (request.meth, request.path) {
+      (Get, "/api/health") => handle_health(conn)
+      (Get, "/api/realtime") => handle_realtime(request, conn, open_provider)
+      _ => handle_not_found(conn)
+    }
+  })
+}
+
+///|
+async fn handle_health(conn : @http.ServerConnection) -> Unit {
+  let body = health_json()
+  conn.send_response(
+    200,
+    "OK",
+    extra_headers=Map([
+      (@http.CaseInsensitiveString("Content-Type"), "application/json"),
+      (@http.CaseInsensitiveString("Content-Length"), body.length().to_string()),
+    ]),
+  )
+  conn.text.write(body)
+}
+
+///|
+async fn handle_not_found(conn : @http.ServerConnection) -> Unit {
+  let body = "{\"error\":\"not_found\"}"
+  conn.send_response(
+    404,
+    "NotFound",
+    extra_headers=Map([
+      (@http.CaseInsensitiveString("Content-Type"), "application/json"),
+      (@http.CaseInsensitiveString("Content-Length"), body.length().to_string()),
+    ]),
+  )
+  conn.text.write(body)
+}
+
+///|
+async fn send_event(
+  ws : @websocket.Conn,
+  event : @protocol.ServerEvent,
+) -> Unit {
+  ws.send_text(@protocol.encode_server_event_string(event))
+}
+
+///|
+async fn send_error(
+  ws : @websocket.Conn,
+  code : @protocol.ErrorCode,
+  message : String,
+  retryable : Bool,
+) -> Unit {
+  send_event(ws, @protocol.ServerEvent::Error(code~, message~, retryable~))
+}
+
+///|
+/// One client connection: handshake, then bridge client and provider.
+async fn handle_realtime(
+  request : @http.RequestHeader,
+  conn : @http.ServerConnection,
+  open_provider : ProviderFactory,
+) -> Unit {
+  let ws = @websocket.from_http_server(request, conn) catch {
+    _ => {
+      handle_not_found(conn)
+      return
+    }
+  }
+  defer ws.close()
+  // 1. Handshake. The first frame must be `session.hello`.
+  let hello = match read_client_event(ws) {
+    None => return
+    Some(Err(error)) => {
+      send_error(ws, protocol_error_code(error), error.to_string(), false)
+      return
+    }
+    Some(
+      Ok(
+        Some(
+          @protocol.ClientEvent::Hello(
+            request_id~,
+            protocol_version~,
+            capabilities~
+          )
+        )
+      )
+    ) => (request_id, protocol_version, capabilities)
+    Some(Ok(_)) => {
+      send_error(
+        ws,
+        @protocol.ErrorCode::HandshakeRequired,
+        "first event must be session.hello",
+        false,
+      )
+      return
+    }
+  }
+  let (request_id, protocol_version, client_capabilities) = hello
+  if !@protocol.is_compatible_version(protocol_version) {
+    send_error(
+      ws,
+      @protocol.ErrorCode::UnsupportedVersion,
+      "unsupported protocol version " + protocol_version,
+      false,
+    )
+    return
+  }
+  let session_id = next_session_id()
+  let provider = match open_provider(session_id) {
+    Ok(provider) => provider
+    Err(failure) => {
+      send_error(ws, failure.code, failure.message, failure.retryable)
+      return
+    }
+  }
+  let capabilities = negotiate_capabilities(client_capabilities)
+  send_event(
+    ws,
+    @protocol.ServerEvent::Ready(
+      request_id~,
+      session_id~,
+      protocol_version=@protocol.protocol_version,
+      capabilities~,
+    ),
+  )
+  bridge(ws, provider)
+  provider.close()
+}
+
+///|
+/// Intersect the client's capabilities with ours, preserving our order.
+pub fn negotiate_capabilities(client : Array[String]) -> Array[String] {
+  let result : Array[String] = []
+  for capability in @protocol.all_capabilities() {
+    if client.contains(capability) {
+      result.push(capability)
+    }
+  }
+  result
+}
+
+///|
+/// Map a decode failure to a contract error code.
+fn protocol_error_code(error : @protocol.ProtocolError) -> @protocol.ErrorCode {
+  match error {
+    UnsupportedVersion(_) => @protocol.ErrorCode::UnsupportedVersion
+    InvalidJson(_) | MissingField(_) | InvalidField(_, _) =>
+      @protocol.ErrorCode::InvalidEvent
+  }
+}
+
+///|
+/// Read one client frame.
+///
+/// `None` means the transport closed. `Some(Err(_))` means the frame was
+/// readable but not a valid event, which the caller must report to the client
+/// instead of closing silently.
+async fn read_client_event(
+  ws : @websocket.Conn,
+) -> Result[@protocol.ClientEvent?, @protocol.ProtocolError]? {
+  let raw = ws.recv().text.read_all() catch { _ => return None }
+  Some(@protocol.decode_client_event(raw))
+}
+
+///|
+/// Run the three pumps until the session ends.
+///
+/// - client reader: decodes client events and drives the provider
+/// - provider reader: normalizes upstream events into the outbound queue
+/// - writer: drains the queue to the client
+///
+/// The queue is bounded, so a slow client blocks the provider reader instead
+/// of growing memory without limit.
+async fn bridge(
+  ws : @websocket.Conn,
+  provider : &@ports.RealtimeProvider,
+) -> Unit {
+  let outbound : @aqueue.Queue[@protocol.ServerEvent?] = @aqueue.Queue(
+    kind=Blocking(outbound_capacity),
+  )
+  let done : @aqueue.Queue[Unit] = @aqueue.Queue(kind=Blocking(1))
+  @async.with_task_group() <| group => {
+    group.spawn_bg(no_wait=true) <| () => {
+      client_pump(ws, provider, outbound)
+      done.put(())
+    }
+    group.spawn_bg(no_wait=true) <| () => { provider_pump(provider, outbound) }
+    group.spawn_bg(no_wait=true) <| () => {
+      writer_pump(ws, outbound)
+      done.put(())
+    }
+    done.get()
+  }
+}
+
+///|
+async fn client_pump(
+  ws : @websocket.Conn,
+  provider : &@ports.RealtimeProvider,
+  outbound : @aqueue.Queue[@protocol.ServerEvent?],
+) -> Unit {
+  let input_rate = provider.input_sample_rate()
+  for ;; {
+    let raw = ws.recv().text.read_all() catch { _ => return }
+    let event = match @protocol.decode_client_event(raw) {
+      Ok(event) => event
+      Err(error) => {
+        outbound.put(
+          Some(
+            @protocol.ServerEvent::Error(
+              code=@protocol.ErrorCode::InvalidEvent,
+              message=error.to_string(),
+              retryable=false,
+            ),
+          ),
+        )
+        continue
+      }
+    }
+    match event {
+      None => ()
+      Some(@protocol.ClientEvent::Hello(..)) =>
+        outbound.put(
+          Some(
+            @protocol.ServerEvent::Error(
+              code=@protocol.ErrorCode::InvalidEvent,
+              message="session.hello is only valid once",
+              retryable=false,
+            ),
+          ),
+        )
+      Some(
+        @protocol.ClientEvent::AudioAppend(
+          data~,
+          format~,
+          sample_rate~,
+          channels~
+        )
+      ) =>
+        if format != "pcm16" || sample_rate != input_rate || channels != 1 {
+          outbound.put(
+            Some(
+              @protocol.ServerEvent::Error(
+                code=@protocol.ErrorCode::AudioFormatUnsupported,
+                message="expected pcm16 mono " +
+                  input_rate.to_string() +
+                  " Hz, got " +
+                  format +
+                  " " +
+                  channels.to_string() +
+                  "ch " +
+                  sample_rate.to_string() +
+                  " Hz",
+                retryable=false,
+              ),
+            ),
+          )
+        } else {
+          provider.send_audio(data)
+        }
+      Some(@protocol.ClientEvent::Text(text~)) => provider.send_text(text)
+      Some(@protocol.ClientEvent::Interrupt) => provider.interrupt()
+      Some(@protocol.ClientEvent::Close) => return
+      Some(@protocol.ClientEvent::ImageAppend(..)) =>
+        outbound.put(
+          Some(
+            @protocol.ServerEvent::Error(
+              code=@protocol.ErrorCode::InvalidEvent,
+              message="image input is not supported before P4",
+              retryable=false,
+            ),
+          ),
+        )
+    }
+  }
+}
+
+///|
+async fn provider_pump(
+  provider : &@ports.RealtimeProvider,
+  outbound : @aqueue.Queue[@protocol.ServerEvent?],
+) -> Unit {
+  for ;; {
+    match provider.next_event() {
+      Some(event) => outbound.put(Some(event))
+      None => {
+        outbound.put(None)
+        return
+      }
+    }
+  }
+}
+
+///|
+async fn writer_pump(
+  ws : @websocket.Conn,
+  outbound : @aqueue.Queue[@protocol.ServerEvent?],
+) -> Unit {
+  for ;; {
+    match outbound.get() {
+      Some(event) => send_event(ws, event) catch { _ => return }
+      None => {
+        ws.send_close() catch {
+          _ => ()
+        }
+        return
+      }
+    }
+  }
+}
+
+///|
+let session_counter : Ref[Int32] = Ref(0)
+
+///|
+/// Session IDs are opaque to clients; only uniqueness within a process matters.
+fn next_session_id() -> String {
+  session_counter.val = session_counter.val + 1
+  "s-" + session_counter.val.to_string()
+}

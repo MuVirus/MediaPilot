@@ -1,0 +1,29 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "MuVirus/MediaPilot/gateway"
+
+import {
+  "MuVirus/MediaPilot/ports",
+  "moonbitlang/core/async/http",
+}
+
+// Values
+pub fn health_json() -> String
+
+pub fn health_payload() -> Json
+
+pub fn negotiate_capabilities(Array[String]) -> Array[String]
+
+pub let outbound_capacity : Int32
+
+pub async fn run_gateway(String, async (String) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure]) -> Unit
+
+pub async fn serve(@http.Server, async (String) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure]) -> Unit
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+pub type ProviderFactory = async (String) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure]
+
+// Traits

@@ -1,8 +1,20 @@
 import {
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/http",
+  "moonbitlang/core/async/websocket",
   "moonbitlang/core/json",
+  "MuVirus/MediaPilot/ports",
   "MuVirus/MediaPilot/protocol",
 }
 
 import {
   "moonbitlang/core/json",
 } for "test"
+
+options(
+  "allow-experimental-packages": [
+    "moonbitlang/core/async",
+    "moonbitlang/core/async/http",
+    "moonbitlang/core/async/websocket",
+  ],
+)

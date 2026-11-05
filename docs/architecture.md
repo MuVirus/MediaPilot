@@ -33,14 +33,16 @@ Browser / Native client
 | 包 | 职责 | 禁止 |
 | --- | --- | --- |
 | `protocol/` | 事件类型、JSON 编解码、版本与能力常量、错误码 | 网络、文件、provider、backend |
+| `ports/` | 连接 `gateway/` 与 provider/backend 的 trait | 具体实现、网络 |
 | `gateway/` | 连接、会话、路由、静态资源、健康检查 | 直接拼接 provider 报文 |
 | `realtime/` | provider 适配器与事件映射 | 感知客户端 wire 细节 |
 | `backend/` | `BackendPort` 与 LLM/ACP/MCP 适配器 | 感知音频传输 |
 | `audio/` | 采集、播放、重采样 | 感知会话业务 |
 | `cmd/` | 组装依赖、读配置、启动 | 业务分支 |
 
-依赖方向：`cmd → gateway/realtime/backend/audio → protocol`。
+依赖方向：`cmd → gateway/realtime/backend/audio → ports → protocol`。
 `protocol/` 不依赖任何其他包，这样它才能同时编译到 native 和 wasm。
+`gateway/` 与 `realtime/` 是兄弟包，互不 import，只共享 `ports/` 的 trait。
 
 ## 为什么 provider 和 gateway 要分开
 

@@ -1,5 +1,13 @@
-// import {
-//   "MuVirus/MediaPilot" @lib,
-// }
+import {
+  "moonbitlang/core/async",
+  "moonbitlang/core/env",
+  "MuVirus/MediaPilot/gateway",
+  "MuVirus/MediaPilot/ports",
+  "MuVirus/MediaPilot/realtime",
+}
 
 pkgtype(kind: "executable")
+
+options(
+  "allow-experimental-packages": [ "moonbitlang/core/async" ],
+)

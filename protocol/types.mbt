@@ -138,4 +138,4 @@ pub(all) suberror ProtocolError {
   MissingField(String)
   InvalidField(String, String)
   UnsupportedVersion(String)
-} derive(Debug)
+} derive(Debug, Show)

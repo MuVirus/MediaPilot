@@ -28,14 +28,15 @@
 
 | Capability | 含义 | Locked by |
 | --- | --- | --- |
-| `realtime.session` | `WS /api/realtime` 接受 `session.hello` 并返回 `session.ready` | `pending: P1` |
-| `realtime.audio-in` | 客户端可推送 PCM16 单声道 16 kHz 音频 | `pending: P1` |
-| `realtime.audio-out` | 服务端推送 PCM16 单声道 24 kHz 音频 | `pending: P1` |
-| `realtime.text-in` | 客户端可发送文本输入 | `pending: P1` |
-| `realtime.interrupt` | 客户端可打断当前回复并清空播放 | `pending: P1` |
+| `realtime.session` | `WS /api/realtime` 接受 `session.hello` 并返回 `session.ready` | `gateway/integration_test.mbt` |
+| `realtime.audio-in` | 客户端可推送 PCM16 单声道 16 kHz 音频 | `gateway/integration_test.mbt` |
+| `realtime.audio-out` | 服务端推送 PCM16 单声道 24 kHz 音频 | `gateway/integration_test.mbt` |
+| `realtime.text-in` | 客户端可发送文本输入 | `gateway/integration_test.mbt` |
+| `realtime.interrupt` | 客户端可打断当前回复并清空播放 | `gateway/integration_test.mbt` |
 | `realtime.playback-clear` | 服务端可要求客户端停止播放已缓冲音频 | `protocol/codec_test.mbt` |
 
-事件的 JSON 形状由 `protocol/codec_test.mbt` 锁定；上表中的能力在传输层实现前仍为 `pending`。
+事件的 JSON 形状由 `protocol/codec_test.mbt` 锁定；`GET /api/health` 的响应形状由
+`gateway/gateway_test.mbt` 锁定。
 
 ## 端点
 
