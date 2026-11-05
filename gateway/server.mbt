@@ -260,7 +260,7 @@ async fn handle_realtime(
       capabilities~,
     ),
   )
-  bridge(ws, provider, session_id, backend)
+  bridge(ws, provider, session_id, capabilities, backend)
   provider.close()
   match backend {
     Some(backend) => backend.close() catch { _ => () }
@@ -334,6 +334,60 @@ async fn read_client_event(
 }
 
 ///|
+/// The gateway asks the client and waits this long before treating a permission
+/// request as denied.
+pub let permission_timeout_ms : Int32 = 60000
+
+///|
+/// A client answer to one `permission.request`.
+struct PermissionAnswer {
+  request_id : String
+  decision : @ports.PermissionDecision
+  /// `client`, `timeout`, `policy`, or `cancelled`.
+  source : String
+}
+
+///|
+/// State shared by the two pumps of one client session.
+struct SessionFlow {
+  outbound : @aqueue.Queue[@protocol.ServerEvent?]
+  session_id : String
+  answers : @aqueue.Queue[PermissionAnswer]
+  /// The request id the gateway is waiting on, or "" when none.
+  pending_permission : Ref[String]
+  /// The delegated task id, or "" when idle. Used to cancel on interrupt.
+  current_task : Ref[String]
+  /// Set when the client interrupts, so a late tool result does not speak.
+  interrupted : Ref[Bool]
+  /// Set once the client allows everything for the rest of the session.
+  session_allow : Ref[Bool]
+  /// True when the client advertised `realtime.permission`, so the gateway may
+  /// ask. A client that did not is denied by policy instead of waiting.
+  can_ask : Bool
+}
+
+///|
+async fn SessionFlow::task_updated(
+  self : SessionFlow,
+  task_id : String,
+  status : String,
+  text : String,
+  step : String,
+) -> Unit {
+  self.outbound.put(
+    Some(
+      @protocol.ServerEvent::TaskUpdated(
+        session_id=self.session_id,
+        task_id~,
+        status~,
+        text~,
+        step~,
+      ),
+    ),
+  )
+}
+
+///|
 /// Run the three pumps until the session ends.
 ///
 /// - client reader: decodes client events and drives the provider
@@ -346,6 +400,7 @@ async fn bridge(
   ws : @websocket.Conn,
   provider : &@ports.RealtimeProvider,
   session_id : String,
+  capabilities : Array[String],
   backend : &@ports.BackendPort?,
 ) -> Unit {
   let outbound : @aqueue.Queue[@protocol.ServerEvent?] = @aqueue.Queue(
@@ -355,13 +410,23 @@ async fn bridge(
   // Set when the client closed on purpose, so an upstream shutdown is not
   // reported back as a retryable error.
   let client_closing : Ref[Bool] = Ref(false)
+  let flow : SessionFlow = {
+    outbound,
+    session_id,
+    answers: @aqueue.Queue(kind=Blocking(4)),
+    pending_permission: Ref(""),
+    current_task: Ref(""),
+    interrupted: Ref(false),
+    session_allow: Ref(false),
+    can_ask: capabilities.contains(@protocol.capability_permission),
+  }
   @async.with_task_group() <| group => {
     group.spawn_bg(no_wait=true) <| () => {
-      client_pump(ws, provider, session_id, outbound, client_closing)
+      client_pump(ws, provider, flow, client_closing, backend)
       done.put(())
     }
     group.spawn_bg(no_wait=true) <| () => {
-      provider_pump(provider, outbound, client_closing, backend, session_id)
+      provider_pump(provider, flow, client_closing, backend)
     }
     group.spawn_bg(no_wait=true) <| () => {
       writer_pump(ws, outbound)
@@ -399,9 +464,9 @@ async fn drain_outbound(
 async fn client_pump(
   ws : @websocket.Conn,
   provider : &@ports.RealtimeProvider,
-  session_id : String,
-  outbound : @aqueue.Queue[@protocol.ServerEvent?],
+  flow : SessionFlow,
   client_closing : Ref[Bool],
+  backend : &@ports.BackendPort?,
 ) -> Unit {
   let input_rate = provider.input_sample_rate()
   for ;; {
@@ -414,7 +479,7 @@ async fn client_pump(
     let event = match @protocol.decode_client_event(raw) {
       Ok(event) => event
       Err(error) => {
-        outbound.put(
+        flow.outbound.put(
           Some(
             @protocol.ServerEvent::Error(
               code=@protocol.ErrorCode::InvalidEvent,
@@ -429,7 +494,7 @@ async fn client_pump(
     match event {
       None => ()
       Some(@protocol.ClientEvent::Hello(..)) =>
-        outbound.put(
+        flow.outbound.put(
           Some(
             @protocol.ServerEvent::Error(
               code=@protocol.ErrorCode::InvalidEvent,
@@ -447,7 +512,7 @@ async fn client_pump(
         )
       ) =>
         if format != "pcm16" || sample_rate != input_rate || channels != 1 {
-          outbound.put(
+          flow.outbound.put(
             Some(
               @protocol.ServerEvent::Error(
                 code=@protocol.ErrorCode::AudioFormatUnsupported,
@@ -468,15 +533,63 @@ async fn client_pump(
           provider.send_audio(data)
         }
       Some(@protocol.ClientEvent::Text(text~)) => provider.send_text(text)
+      Some(@protocol.ClientEvent::PermissionRespond(request_id~, decision~)) => {
+        let parsed = match @ports.PermissionDecision::from_token(decision) {
+          Some(decision) => decision
+          None => {
+            flow.outbound.put(
+              Some(
+                @protocol.ServerEvent::Error(
+                  code=@protocol.ErrorCode::InvalidEvent,
+                  message="unknown permission decision: " + decision,
+                  retryable=false,
+                ),
+              ),
+            )
+            continue
+          }
+        }
+        if flow.pending_permission.val != request_id {
+          flow.outbound.put(
+            Some(
+              @protocol.ServerEvent::Error(
+                code=@protocol.ErrorCode::InvalidEvent,
+                message="no pending permission request for " + request_id,
+                retryable=false,
+              ),
+            ),
+          )
+        } else {
+          flow.answers.put({ request_id, decision: parsed, source: "client", })
+        }
+      }
       Some(@protocol.ClientEvent::Interrupt) => {
         // Cancel upstream first, then drop audio already queued for the
         // cancelled response, then confirm to the client.
         provider.interrupt()
-        drain_outbound(outbound)
-        outbound.put(
+        drain_outbound(flow.outbound)
+        // Stop the delegated task too. The waiter gets a cancel answer so it
+        // does not sit on the permission timeout.
+        let task_id = flow.current_task.val
+        if task_id != "" {
+          flow.interrupted.val = true
+          match backend {
+            Some(backend) => backend.cancel(task_id)
+            None => ()
+          }
+          let pending = flow.pending_permission.val
+          if pending != "" {
+            flow.answers.put({
+              request_id: pending,
+              decision: @ports.PermissionDecision::Deny,
+              source: "cancelled",
+            })
+          }
+        }
+        flow.outbound.put(
           Some(
             @protocol.ServerEvent::PlaybackClear(
-              session_id~,
+              session_id=flow.session_id,
               reason="client_interrupt",
             ),
           ),
@@ -487,7 +600,7 @@ async fn client_pump(
         return
       }
       Some(@protocol.ClientEvent::ImageAppend(..)) =>
-        outbound.put(
+        flow.outbound.put(
           Some(
             @protocol.ServerEvent::Error(
               code=@protocol.ErrorCode::InvalidEvent,
@@ -503,33 +616,36 @@ async fn client_pump(
 ///|
 async fn provider_pump(
   provider : &@ports.RealtimeProvider,
-  outbound : @aqueue.Queue[@protocol.ServerEvent?],
+  flow : SessionFlow,
   client_closing : Ref[Bool],
   backend : &@ports.BackendPort?,
-  session_id : String,
 ) -> Unit {
   let mut task_seq : Int32 = 0
   for ;; {
     match provider.next_event() {
-      Some(@ports.RealtimeEvent::Forward(event~)) => outbound.put(Some(event))
+      Some(@ports.RealtimeEvent::Forward(event~)) =>
+        flow.outbound.put(Some(event))
       Some(@ports.RealtimeEvent::ToolCall(call_id~, name~, arguments~)) => {
-        let output = match backend {
+        // A new turn starts here, so an earlier interrupt no longer applies.
+        flow.interrupted.val = false
+        let (output, continue_turn) = match backend {
           Some(backend) => {
             task_seq = task_seq + 1
-            handle_tool_call(
-              backend, outbound, session_id, task_seq, name, arguments,
-            )
+            handle_tool_call(backend, flow, task_seq, name, arguments)
           }
           None =>
-            tool_error(
-              "no backend is configured, so the task cannot be delegated",
+            (
+              tool_error(
+                "no backend is configured, so the task cannot be delegated",
+              ),
+              true,
             )
         }
-        provider.send_tool_result(call_id, output)
+        provider.send_tool_result(call_id, output, continue_turn)
       }
       None => {
         if !client_closing.val {
-          outbound.put(
+          flow.outbound.put(
             Some(
               @protocol.ServerEvent::Error(
                 code=@protocol.ErrorCode::ProviderUnavailable,
@@ -539,7 +655,7 @@ async fn provider_pump(
             ),
           )
         }
-        outbound.put(None)
+        flow.outbound.put(None)
         return
       }
     }
@@ -572,39 +688,159 @@ fn tool_instruction(arguments : String) -> String? {
 }
 
 ///|
-/// Run one delegated task and return the JSON result for the model.
+/// Serializes audit writes. The async stdio writer is not reentrant, and one
+/// process can host several sessions.
+let audit_lock : @async.Mutex = @async.Mutex()
+
+///|
+/// One audit line per permission decision.
+///
+/// Writes to stderr unbuffered so the line survives a redirected log and a
+/// later kill. Deliberately excludes the description: it is agent-authored text
+/// that may echo commands or file contents.
+async fn audit_permission(
+  session_id : String,
+  task_id : String,
+  request_id : String,
+  operation : String,
+  decision : @ports.PermissionDecision,
+  source : String,
+) -> Unit {
+  let line = "[audit] permission session=" +
+    session_id +
+    " task=" +
+    task_id +
+    " request=" +
+    request_id +
+    " operation=" +
+    operation +
+    " decision=" +
+    decision.to_token() +
+    " source=" +
+    source +
+    "\n"
+  audit_lock.acquire()
+  defer audit_lock.release()
+  @stdio.stderr.write(@utf8.encode(line)) catch {
+    _ => ()
+  }
+}
+
+///|
+/// Ask the client for permission and wait for an answer or the timeout.
+async fn ask_permission(
+  flow : SessionFlow,
+  task_id : String,
+  request_id : String,
+  operation : String,
+  description : String,
+) -> @ports.PermissionDecision {
+  if !flow.can_ask {
+    // No permission capability was negotiated, so asking would hang on the
+    // timeout. Deny and tell the client why.
+    flow.outbound.put(
+      Some(
+        @protocol.ServerEvent::PermissionResolved(
+          session_id=flow.session_id,
+          request_id~,
+          decision="deny",
+          source="policy",
+        ),
+      ),
+    )
+    audit_permission(
+      flow.session_id,
+      task_id,
+      request_id,
+      operation,
+      @ports.PermissionDecision::Deny,
+      "policy",
+    )
+    return @ports.PermissionDecision::Deny
+  }
+  flow.pending_permission.val = request_id
+  flow.outbound.put(
+    Some(
+      @protocol.ServerEvent::PermissionRequest(
+        session_id=flow.session_id,
+        request_id~,
+        task_id~,
+        operation~,
+        description~,
+        timeout_ms=permission_timeout_ms,
+      ),
+    ),
+  )
+  let answer = try
+    @async.with_timeout_opt(permission_timeout_ms) <| () => {
+      flow.answers.get()
+    }
+  catch {
+    _ => None
+  }
+  flow.pending_permission.val = ""
+  let (decision, source) = match answer {
+    Some(answer) =>
+      if answer.request_id == request_id {
+        (answer.decision, answer.source)
+      } else {
+        (@ports.PermissionDecision::Deny, "timeout")
+      }
+    None => (@ports.PermissionDecision::Deny, "timeout")
+  }
+  flow.outbound.put(
+    Some(
+      @protocol.ServerEvent::PermissionResolved(
+        session_id=flow.session_id,
+        request_id~,
+        decision=decision.to_token(),
+        source~,
+      ),
+    ),
+  )
+  audit_permission(
+    flow.session_id,
+    task_id,
+    request_id,
+    operation,
+    decision,
+    source,
+  )
+  decision
+}
+
+///|
+/// Run one delegated task and return the tool result plus whether the model
+/// should continue the turn.
 ///
 /// `submit` blocks until the task finishes, so it runs in a child task while
 /// this function drains the backend queue. That also gives the client live
 /// `task.updated` progress instead of one event at the end.
 async fn handle_tool_call(
   backend : &@ports.BackendPort,
-  outbound : @aqueue.Queue[@protocol.ServerEvent?],
-  session_id : String,
+  flow : SessionFlow,
   task_seq : Int32,
   name : String,
   arguments : String,
-) -> String {
+) -> (String, Bool) {
   if name != "delegate_task" {
-    return tool_error("unknown tool: " + name)
+    return (tool_error("unknown tool: " + name), true)
   }
   let instruction = match tool_instruction(arguments) {
     Some(text) => text
-    None => return tool_error("delegate_task requires a non-empty instruction")
+    None =>
+      return (
+        tool_error("delegate_task requires a non-empty instruction"),
+        true,
+      )
   }
   let task_id = "t-" + task_seq.to_string()
-  outbound.put(
-    Some(
-      @protocol.ServerEvent::TaskUpdated(
-        session_id~,
-        task_id~,
-        status="running",
-        text="",
-      ),
-    ),
-  )
+  let mut task_allow = false
+  let mut step = ""
   let mut text = ""
   let mut failure = ""
+  flow.current_task.val = task_id
+  flow.task_updated(task_id, "running", "", "")
   @async.with_task_group() <| group => {
     group.spawn_bg(no_wait=true) <| () => {
       backend.submit(task_id, instruction)
@@ -614,19 +850,59 @@ async fn handle_tool_call(
         None => break
         Some(@ports.BackendEvent::TextDelta(text=delta)) => {
           text = text + delta
-          outbound.put(
-            Some(
-              @protocol.ServerEvent::TaskUpdated(
-                session_id~,
-                task_id~,
-                status="running",
-                text~,
-              ),
-            ),
-          )
+          flow.task_updated(task_id, "running", text, step)
         }
         Some(@ports.BackendEvent::TextDone(text=final_text)) =>
           text = final_text
+        Some(@ports.BackendEvent::Progress(text=line)) => {
+          step = line
+          flow.task_updated(task_id, "running", text, step)
+        }
+        Some(
+          @ports.BackendEvent::PermissionRequest(
+            request_id~,
+            operation~,
+            description~
+          )
+        ) => {
+          let decision = if flow.session_allow.val || task_allow {
+            let inherited = if flow.session_allow.val {
+              @ports.PermissionDecision::AllowSession
+            } else {
+              @ports.PermissionDecision::AllowOnce
+            }
+            flow.outbound.put(
+              Some(
+                @protocol.ServerEvent::PermissionResolved(
+                  session_id=flow.session_id,
+                  request_id~,
+                  decision=inherited.to_token(),
+                  source="policy",
+                ),
+              ),
+            )
+            audit_permission(
+              flow.session_id,
+              task_id,
+              request_id,
+              operation,
+              inherited,
+              "policy",
+            )
+            inherited
+          } else {
+            ask_permission(flow, task_id, request_id, operation, description)
+          }
+          match decision {
+            @ports.PermissionDecision::AllowTask => task_allow = true
+            @ports.PermissionDecision::AllowSession => {
+              task_allow = true
+              flow.session_allow.val = true
+            }
+            _ => ()
+          }
+          backend.respond_permission(request_id, decision)
+        }
         Some(@ports.BackendEvent::Failed(message~, ..)) => {
           failure = message
           break
@@ -636,32 +912,24 @@ async fn handle_tool_call(
       }
     }
   }
+  flow.current_task.val = ""
+  let cancelled = flow.interrupted.val
   if failure != "" {
-    outbound.put(
-      Some(
-        @protocol.ServerEvent::TaskUpdated(
-          session_id~,
-          task_id~,
-          status="failed",
-          text=failure,
-        ),
-      ),
-    )
-    tool_error(failure)
+    flow.task_updated(task_id, "failed", failure, step)
+    (tool_error(failure), true)
+  } else if cancelled {
+    flow.task_updated(task_id, "cancelled", text, step)
+    ("{\"status\":\"cancelled\"}", false)
   } else {
-    outbound.put(
-      Some(
-        @protocol.ServerEvent::TaskUpdated(
-          session_id~,
-          task_id~,
-          status="completed",
-          text~,
-        ),
-      ),
+    flow.task_updated(task_id, "completed", text, step)
+    (
+      "{\"status\":\"ok\",\"answer\":" + Json::string(text).stringify() + "}",
+      true,
     )
-    "{\"status\":\"ok\",\"answer\":" + Json::string(text).stringify() + "}"
   }
 }
+
+///|
 
 ///|
 async fn writer_pump(

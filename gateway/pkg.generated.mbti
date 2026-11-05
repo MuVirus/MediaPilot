@@ -17,6 +17,8 @@ pub fn negotiate_capabilities(Array[String]) -> Array[String]
 
 pub let outbound_capacity : Int32
 
+pub let permission_timeout_ms : Int32
+
 pub async fn run_gateway(String, async (String, Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String) -> Unit
 
 pub async fn serve(@http.Server, async (String, Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String) -> Unit
@@ -24,6 +26,9 @@ pub async fn serve(@http.Server, async (String, Json?) -> Result[&@ports.Realtim
 // Errors
 
 // Types and methods
+type PermissionAnswer
+
+type SessionFlow
 
 // Type aliases
 pub type BackendFactory = async (String) -> Result[&@ports.BackendPort, @ports.ProviderFailure]

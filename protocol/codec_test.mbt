@@ -83,11 +83,77 @@ test "task updated round trip" {
     task_id="t-1",
     status="running",
     text="partial",
+    step="reading gateway/server.mbt",
   )
   let decoded = @protocol.decode_server_event(
     @protocol.encode_server_event_string(event),
   ).unwrap()
   assert_eq(decoded, Some(event))
+}
+
+///|
+test "task updated without step still decodes" {
+  let decoded = @protocol.decode_server_event(
+    "{\"type\":\"task.updated\",\"sessionId\":\"s-1\",\"taskId\":\"t-1\",\"status\":\"running\",\"text\":\"partial\"}",
+  ).unwrap()
+  match decoded {
+    Some(@protocol.ServerEvent::TaskUpdated(step~, ..)) => assert_eq(step, "")
+    _ => fail("expected task.updated")
+  }
+}
+
+///|
+test "permission request round trip" {
+  let event = @protocol.ServerEvent::PermissionRequest(
+    session_id="s-1",
+    request_id="p-1",
+    task_id="t-1",
+    operation="execute",
+    description="run `moon test`",
+    timeout_ms=60000,
+  )
+  let decoded = @protocol.decode_server_event(
+    @protocol.encode_server_event_string(event),
+  ).unwrap()
+  assert_eq(decoded, Some(event))
+}
+
+///|
+test "permission resolved round trip" {
+  let event = @protocol.ServerEvent::PermissionResolved(
+    session_id="s-1",
+    request_id="p-1",
+    decision="allow_once",
+    source="client",
+  )
+  let decoded = @protocol.decode_server_event(
+    @protocol.encode_server_event_string(event),
+  ).unwrap()
+  assert_eq(decoded, Some(event))
+}
+
+///|
+test "permission respond round trip" {
+  let event = @protocol.ClientEvent::PermissionRespond(
+    request_id="p-1",
+    decision="allow_session",
+  )
+  let decoded = @protocol.decode_client_event(
+    @protocol.encode_client_event_string(event),
+  ).unwrap()
+  assert_eq(decoded, Some(event))
+}
+
+///|
+test "permission decision tokens are validated by the gateway" {
+  let decoded = @protocol.decode_client_event(
+    "{\"type\":\"permission.respond\",\"requestId\":\"p-1\",\"decision\":\"always\"}",
+  ).unwrap()
+  match decoded {
+    Some(@protocol.ClientEvent::PermissionRespond(decision~, ..)) =>
+      assert_eq(decision, "always")
+    _ => fail("expected permission.respond")
+  }
 }
 
 ///|

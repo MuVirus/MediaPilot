@@ -3,11 +3,17 @@ package "MuVirus/MediaPilot/backend"
 
 import {
   "MuVirus/MediaPilot/ports",
+  "moonbitlang/core/async",
   "moonbitlang/core/async/aqueue",
+  "moonbitlang/core/async/process",
   "moonbitlang/core/debug",
 }
 
 // Values
+pub let acp_event_capacity : Int32
+
+pub let acp_protocol_version : Int32
+
 pub let default_llm_base_url : String
 
 pub let llm_event_capacity : Int32
@@ -15,6 +21,33 @@ pub let llm_event_capacity : Int32
 // Errors
 
 // Types and methods
+pub struct AcpBackend {
+  config : AcpConfig
+  events : @aqueue.Queue[@ports.BackendEvent?]
+  pending : Map[Int64, @aqueue.Queue[Json]]
+  write_lock : @async.Mutex
+  mut child : @process.OrphanProcess?
+  mut next_id : Int64
+  mut session_id : String
+  mut turn_id : Int64
+  mut turn_text : String
+  mut last_stderr : String
+  mut closed : Bool
+  mut cancelled : Bool
+  // private fields
+}
+pub fn AcpBackend::config(Self) -> AcpConfig
+pub fn AcpBackend::is_ready(Self) -> Bool
+pub fn AcpBackend::new(AcpConfig) -> Self
+pub impl @ports.BackendPort for AcpBackend
+
+pub(all) struct AcpConfig {
+  command : String
+  args : Array[String]
+  cwd : String
+  inherit_env : Bool
+} derive(Eq, @debug.Debug)
+
 pub struct LlmBackend {
   config : LlmConfig
   events : @aqueue.Queue[@ports.BackendEvent?]

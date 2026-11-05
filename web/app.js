@@ -21,6 +21,8 @@ const els = {
   status: document.getElementById("status"),
   transcript: document.getElementById("transcript"),
   log: document.getElementById("log"),
+  permission: document.getElementById("permission"),
+  permissionText: document.getElementById("permission-text"),
 };
 
 let ws = null;
@@ -41,6 +43,8 @@ let receivedAudioSeconds = 0;
 let taskLine = "";
 let assistantLine = null;
 let userLine = null;
+let permissionRequestId = "";
+let permissionTimer = null;
 
 function log(message) {
   const line = `${new Date().toLocaleTimeString()} ${message}`;
@@ -152,6 +156,40 @@ function send(event) {
   return true;
 }
 
+function hidePermission() {
+  permissionRequestId = "";
+  if (permissionTimer) {
+    clearTimeout(permissionTimer);
+    permissionTimer = null;
+  }
+  els.permission.classList.add("hidden");
+}
+
+function showPermission(event) {
+  hidePermission();
+  permissionRequestId = event.requestId;
+  els.permissionText.textContent = `${event.operation} · ${event.description}`;
+  els.permission.classList.remove("hidden");
+  log(`permission requested: ${event.operation} ${event.description}`);
+  // The gateway denies on its own timeout; hide the panel slightly later so
+  // the user does not see an answer that no longer applies.
+  permissionTimer = setTimeout(() => {
+    if (permissionRequestId === event.requestId) {
+      hidePermission();
+      log("permission timed out");
+    }
+  }, Math.max(1000, event.timeoutMs));
+}
+
+function answerPermission(decision) {
+  if (!permissionRequestId) return;
+  const requestId = permissionRequestId;
+  hidePermission();
+  if (send({ type: "permission.respond", requestId, decision })) {
+    log(`permission answered: ${decision}`);
+  }
+}
+
 function handleServerEvent(event) {
   switch (event.type) {
     case "session.ready":
@@ -183,15 +221,27 @@ function handleServerEvent(event) {
       break;
     case "task.updated":
       if (event.status === "running") {
-        taskLine = `代理处理中 ${event.text.length} 字`;
+        taskLine = event.step
+          ? `代理处理中 ${event.text.length} 字 · ${event.step}`
+          : `代理处理中 ${event.text.length} 字`;
       } else if (event.status === "completed") {
         taskLine = `代理完成 ${event.text.length} 字`;
         log(`task ${event.taskId} completed`);
+      } else if (event.status === "cancelled") {
+        taskLine = "代理已取消";
+        log(`task ${event.taskId} cancelled`);
       } else {
-        taskLine = `代理失败`;
+        taskLine = "代理失败";
         log(`task ${event.taskId} failed: ${event.text}`);
       }
       refreshStatus();
+      break;
+    case "permission.request":
+      showPermission(event);
+      break;
+    case "permission.resolved":
+      hidePermission();
+      log(`permission ${event.requestId} ${event.decision} (${event.source})`);
       break;
     case "error":
       log(`error ${event.code}: ${event.message}`);
@@ -251,7 +301,7 @@ function connectSocket() {
     send({
       type: "session.hello",
       requestId: `c-${Date.now()}`,
-      protocolVersion: "0.2.0",
+      protocolVersion: "0.4.0",
       capabilities: [
         "realtime.audio-in",
         "realtime.audio-out",
@@ -259,6 +309,7 @@ function connectSocket() {
         "realtime.interrupt",
         "realtime.playback-clear",
         "realtime.task",
+        "realtime.permission",
       ],
     });
     log("socket open, hello sent");
@@ -325,6 +376,7 @@ function clearReconnect() {
 
 function teardown() {
   clearReconnect();
+  hidePermission();
   if (workletNode) {
     workletNode.port.onmessage = null;
     workletNode.disconnect();
@@ -402,6 +454,18 @@ els.stop.addEventListener("click", stop);
 els.interrupt.addEventListener("click", () => {
   stopPlayback();
   if (send({ type: "session.interrupt" })) log("interrupt sent");
+});
+document.getElementById("allow-once").addEventListener("click", () => {
+  answerPermission("allow_once");
+});
+document.getElementById("allow-task").addEventListener("click", () => {
+  answerPermission("allow_task");
+});
+document.getElementById("allow-session").addEventListener("click", () => {
+  answerPermission("allow_session");
+});
+document.getElementById("deny").addEventListener("click", () => {
+  answerPermission("deny");
 });
 
 // Debug hook for the headless smoke test and for manual poking in devtools.

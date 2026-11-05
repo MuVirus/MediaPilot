@@ -4,6 +4,7 @@ import {
   "moonbitlang/core/async/fs",
   "moonbitlang/core/async/http",
   "moonbitlang/core/async/socket",
+  "moonbitlang/core/async/stdio",
   "moonbitlang/core/async/websocket",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
@@ -29,6 +30,7 @@ options(
     "moonbitlang/core/async/fs",
     "moonbitlang/core/async/http",
     "moonbitlang/core/async/socket",
+    "moonbitlang/core/async/stdio",
     "moonbitlang/core/async/websocket",
   ],
 )

@@ -47,12 +47,12 @@ P0 已验证的事实：
 
 - [x] `BackendPort`：`submit` / `cancel` / `respond_tool` / `respond_permission` / `next_event` / `close`。
 - [x] LLM backend：OpenAI 兼容 `/chat/completions`，SSE 流式输出，错误映射。
-- [ ] ACP backend：JSON-RPC over stdio，先接 `opencode acp`。
+- [x] ACP backend：JSON-RPC over stdio，先接 `opencode acp`。
 - [x] realtime 侧注册 `delegate_task` 工具，把工具调用转给 `BackendPort`。
 - [x] 工具结果回注 realtime 会话并播报。
-- [ ] 权限请求进入北向事件（`task.updated` / 授权事件）。
-- [ ] 会话级授权范围（once / task / session）与超时。
-- [ ] 审计日志：谁、在哪个会话、批准了什么。
+- [x] 权限请求进入北向事件（`permission.request` / `permission.resolved`）。
+- [x] 会话级授权范围（once / task / session）与超时。
+- [x] 审计日志：谁、在哪个会话、批准了什么。
 
 退出条件：一个需要用户授权的工具调用可以完整走完“请求 → 批准 → 执行 → 播报”。
 
@@ -62,6 +62,11 @@ P2 已验证的事实：
   “工具调用 → 结果注入 → 播报”。
 - DashScope compatible-mode 支持 SSE 流式输出，`backend/` 能逐 delta 读取。
 - 参考项目的模型目录不含 `qwen-audio-3.1-realtime-flash`；该模型带 `tools` 会稳定失败。
+- `opencode acp` 在 build 模式下对获准的 shell 命令发 `session/request_permission`，
+  `allow_once` / `allow_always` / `reject_once` 三种选项可用；read/edit 在默认配置下
+  不询问。
+- 打断进行中的委派任务后，DashScope 会话仍可继续回答新问题；关键是工具调用那一轮
+  不能再发 `function_call_output` 后的 `response.create`。
 
 ## P3 — 产品化
 

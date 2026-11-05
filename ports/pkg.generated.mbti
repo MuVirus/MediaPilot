@@ -14,11 +14,22 @@ import {
 pub(all) enum BackendEvent {
   TextDelta(text~ : String)
   TextDone(text~ : String)
+  Progress(text~ : String)
   ToolCall(call_id~ : String, name~ : String, arguments~ : String)
   PermissionRequest(request_id~ : String, operation~ : String, description~ : String)
   Failed(code~ : @protocol.ErrorCode, message~ : String, retryable~ : Bool)
   Completed
 } derive(Eq, @debug.Debug)
+
+pub(all) enum PermissionDecision {
+  AllowOnce
+  AllowTask
+  AllowSession
+  Deny
+} derive(Eq, @debug.Debug)
+pub fn PermissionDecision::allows(Self) -> Bool
+pub fn PermissionDecision::from_token(String) -> Self?
+pub fn PermissionDecision::to_token(Self) -> String
 
 pub(all) struct ProviderFailure {
   code : @protocol.ErrorCode
@@ -38,7 +49,7 @@ pub(open) trait BackendPort {
   async fn submit(Self, String, String) -> Unit
   async fn cancel(Self, String) -> Unit
   async fn respond_tool(Self, String, String) -> Unit
-  async fn respond_permission(Self, String, Bool) -> Unit
+  async fn respond_permission(Self, String, PermissionDecision) -> Unit
   async fn next_event(Self) -> BackendEvent?
   async fn close(Self) -> Unit
 }
@@ -49,7 +60,7 @@ pub(open) trait RealtimeProvider {
   async fn interrupt(Self) -> Unit
   async fn close(Self) -> Unit
   async fn next_event(Self) -> RealtimeEvent?
-  async fn send_tool_result(Self, String, String) -> Unit
+  async fn send_tool_result(Self, String, String, Bool) -> Unit
   fn input_sample_rate(Self) -> Int32
   fn output_sample_rate(Self) -> Int32
 }

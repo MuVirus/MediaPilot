@@ -4,7 +4,7 @@
 未列出的内容——内部模块路径、数据库结构、配置目录里的文件、日志格式——都不是契约，
 可以随时改变。
 
-状态：`v0.3.0`，P2 进行中。之后的协议变更必须升版本并更新此表。
+状态：`v0.4.0`，P2 进行中。之后的协议变更必须升版本并更新此表。
 
 范围：当前契约只覆盖实时音频。视频复用同一会话与事件模型，P4 才进入契约。
 
@@ -17,7 +17,7 @@
 
 ```json
 {
-  "protocolVersion": "0.3.0",
+  "protocolVersion": "0.4.0",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"]
 }
 ```
@@ -35,6 +35,7 @@
 | `realtime.interrupt` | 客户端可打断当前回复并清空播放 | `gateway/integration_test.mbt` |
 | `realtime.playback-clear` | 服务端可要求客户端停止播放已缓冲音频 | `protocol/codec_test.mbt` |
 | `realtime.task` | 服务端可推送 `task.updated` 背景任务进度 | `gateway/integration_test.mbt` |
+| `realtime.permission` | 服务端可要求客户端批准后台操作 | `gateway/integration_test.mbt` |
 
 事件的 JSON 形状由 `protocol/codec_test.mbt` 锁定；`GET /api/health` 的响应形状由
 `gateway/gateway_test.mbt` 锁定。
@@ -65,7 +66,7 @@
 {
   "type": "session.hello",
   "requestId": "c-1",
-  "protocolVersion": "0.3.0",
+  "protocolVersion": "0.4.0",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"]
 }
 ```
@@ -77,7 +78,7 @@
   "type": "session.ready",
   "requestId": "c-1",
   "sessionId": "s-1",
-  "protocolVersion": "0.3.0",
+  "protocolVersion": "0.4.0",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"]
 }
 ```
@@ -95,7 +96,8 @@
 | `input.audio.append` | `data`, `format`, `sampleRate`, `channels` | 追加一段音频 |
 | `input.text` | `text` | 发送一条文本输入 |
 | `input.image.append` | `data`, `mimeType` | 追加一帧图像（P4） |
-| `session.interrupt` | — | 打断当前回复并清空待播放音频 |
+| `session.interrupt` | — | 打断当前回复、取消进行中的后台任务并清空待播放音频 |
+| `permission.respond` | `requestId`, `decision` | 批准或拒绝一次后台操作 |
 | `session.close` | — | 正常关闭会话 |
 
 `format` 目前只允许 `pcm16`。单次音频块建议 20–100 ms；服务端不得假设固定块大小。
@@ -109,7 +111,9 @@
 | `transcript.final` | `role`, `text` | 一段话的最终转写 |
 | `audio.delta` | `data`, `format`, `sampleRate`, `channels` | 一段可播放音频 |
 | `playback.clear` | `reason` | 立即停止播放并丢弃已缓冲音频 |
-| `task.updated` | `taskId`, `status`, `text` | 背景任务进度 |
+| `task.updated` | `taskId`, `status`, `text`, `step` | 背景任务进度 |
+| `permission.request` | `requestId`, `taskId`, `operation`, `description`, `timeoutMs` | 请求批准一次后台操作 |
+| `permission.resolved` | `requestId`, `decision`, `source` | 该请求已有结果，客户端应关闭等待界面 |
 | `error` | `code`, `message`, `retryable` | 可恢复或不可恢复错误 |
 
 所有服务端事件都带 `type`；除 `error` 外都带 `sessionId`。事件不保证跨会话有序，
@@ -131,10 +135,71 @@
 | `running` | 任务进行中，`text` 是当前已产生的文本，可能为空 |
 | `completed` | 任务完成，`text` 是完整结果 |
 | `failed` | 任务失败，`text` 是错误信息 |
+| `cancelled` | 用户打断导致任务中止，不能当作失败播报 |
+
+`step` 是一行人类可读的进度（例如“正在执行 git status”），可能为空，只能用于展示。
+后端提供 `step` 时，`text` 仍然只表示回答正文，两者不能混用。
 
 同一个 `taskId` 会先收到若干 `running`，再收到一个终态。客户端应在 `running` 时
 显示进度，但不能把增量 `text` 当作最终答案。`task.updated` 只是进度展示；
 最终答案由同一轮次的 `audio.delta` / `transcript.final` 给出。
+
+## 权限请求
+
+只有客户端在 `session.hello` 里声明了 `realtime.permission`，网关才会发送
+`permission.request`。没声明的客户端按“一律拒绝”处理：网关不会发请求，也不会
+等待超时。
+
+```json
+{
+  "type": "permission.request",
+  "sessionId": "s-1",
+  "requestId": "p-3",
+  "taskId": "t-1",
+  "operation": "execute",
+  "description": "echo hello",
+  "timeoutMs": 60000
+}
+```
+
+- `operation` 是稳定 token：`read`、`edit`、`delete`、`move`、`search`、`execute`、
+  `think`、`fetch`、`switch_mode`、`other`。客户端按它选择图标和措辞。
+- `description` 由后端撰写，可能包含命令或路径，**只能展示，不能用于判断**。
+- `timeoutMs` 是网关等待客户端回答的时间；超时后网关按 `deny` 处理并发送
+  `permission.resolved`。
+
+客户端回答：
+
+```json
+{
+  "type": "permission.respond",
+  "requestId": "p-3",
+  "decision": "allow_once"
+}
+```
+
+| `decision` | 含义 |
+| --- | --- |
+| `allow_once` | 只批准这一次请求 |
+| `allow_task` | 当前任务内不再询问 |
+| `allow_session` | 当前会话内不再询问 |
+| `deny` | 拒绝这一次请求 |
+
+未知 `decision` 值是错误（`invalid_event`），不能按批准处理。网关随后用同一个
+`requestId` 发送 `permission.resolved`：
+
+| 字段 | 含义 |
+| --- | --- |
+| `requestId` | 被解决的请求 |
+| `decision` | 最终生效的 `decision` |
+| `source` | `client`、`timeout`、`policy`（客户端未声明能力或命中会话授权）、`cancelled`（用户打断） |
+
+`allow_task` / `allow_session` 是网关侧的承诺：后续同类请求由网关直接按同一决定
+回答，客户端不会再看到 `permission.request`，但会看到 `source = "policy"` 的
+`permission.resolved`。授权范围只影响当前连接；重连后的新会话重新询问。
+
+被拒绝的操作会作为工具结果返回给实时模型，由模型向用户解释；网关不会替用户执行
+任何操作，也不会把拒绝当成批准。
 
 ## 断线与重连
 

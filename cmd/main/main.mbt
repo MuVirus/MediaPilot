@@ -43,9 +43,28 @@ async fn main {
   let bind = env_or("MEDIAPILOT_BIND", "127.0.0.1:8787")
   let instructions = env_or("MEDIAPILOT_INSTRUCTIONS", default_instructions)
   let static_root = env_or("MEDIAPILOT_WEB_ROOT", "web")
+  let backend_kind = env_or("MEDIAPILOT_BACKEND", "llm")
+  let acp_cwd = match @env.get_env_var("MEDIAPILOT_ACP_CWD") {
+    Some(value) if value != "" => value
+    _ => @fs.realpath(".") catch { _ => "." }
+  }
+  let acp_config : @backend.AcpConfig = {
+    command: env_or("MEDIAPILOT_ACP_COMMAND", "opencode"),
+    args: [env_or("MEDIAPILOT_ACP_MODE", "acp")],
+    cwd: acp_cwd,
+    inherit_env: true,
+  }
   println("[gateway] model=" + config.model)
   println("[gateway] voice=" + config.voice)
-  println("[gateway] llm=" + llm_config.model)
+  println(
+    "[gateway] backend=" +
+    backend_kind +
+    (if backend_kind == "acp" {
+      " command=" + acp_config.command
+    } else {
+      " model=" + llm_config.model
+    }),
+  )
   println("[gateway] web=" + static_root)
   let open_provider : @gateway.ProviderFactory = async fn(session_id, tools) {
     let session = match tools {
@@ -76,7 +95,18 @@ async fn main {
     Ok(session as &@ports.RealtimeProvider)
   }
   let open_backend : @gateway.BackendFactory = async fn(_session_id) {
-    Ok(@backend.LlmBackend::new(llm_config) as &@ports.BackendPort)
+    if backend_kind == "none" {
+      return Err(@ports.ProviderFailure::{
+        code: @protocol.ErrorCode::InternalError,
+        message: "MEDIAPILOT_BACKEND=none disables tools",
+        retryable: false,
+      })
+    }
+    if backend_kind == "acp" {
+      Ok(@backend.AcpBackend::new(acp_config) as &@ports.BackendPort)
+    } else {
+      Ok(@backend.LlmBackend::new(llm_config) as &@ports.BackendPort)
+    }
   }
   @gateway.run_gateway(bind, open_provider, open_backend~, static_root~)
 }

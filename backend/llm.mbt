@@ -308,7 +308,7 @@ async fn LlmBackend::respond_tool(
 async fn LlmBackend::respond_permission(
   self : LlmBackend,
   _request_id : String,
-  _allow : Bool,
+  _decision : @ports.PermissionDecision,
 ) -> Unit {
   let _ = self
 }
@@ -353,9 +353,9 @@ pub impl @ports.BackendPort for LlmBackend with fn respond_tool(
 pub impl @ports.BackendPort for LlmBackend with fn respond_permission(
   self,
   request_id,
-  allow,
+  decision,
 ) {
-  self.respond_permission(request_id, allow)
+  self.respond_permission(request_id, decision)
 }
 
 ///|

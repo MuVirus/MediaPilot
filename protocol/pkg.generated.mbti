@@ -14,6 +14,8 @@ pub let capability_audio_out : String
 
 pub let capability_interrupt : String
 
+pub let capability_permission : String
+
 pub let capability_playback_clear : String
 
 pub let capability_session : String
@@ -52,6 +54,7 @@ pub(all) enum ClientEvent {
   AudioAppend(data~ : String, format~ : String, sample_rate~ : Int32, channels~ : Int32)
   Text(text~ : String)
   ImageAppend(data~ : String, mime_type~ : String)
+  PermissionRespond(request_id~ : String, decision~ : String)
   Interrupt
   Close
 } derive(Eq, @debug.Debug)
@@ -76,7 +79,9 @@ pub(all) enum ServerEvent {
   TranscriptFinal(session_id~ : String, role~ : String, text~ : String)
   AudioDelta(session_id~ : String, data~ : String, format~ : String, sample_rate~ : Int32, channels~ : Int32)
   PlaybackClear(session_id~ : String, reason~ : String)
-  TaskUpdated(session_id~ : String, task_id~ : String, status~ : String, text~ : String)
+  TaskUpdated(session_id~ : String, task_id~ : String, status~ : String, text~ : String, step~ : String)
+  PermissionRequest(session_id~ : String, request_id~ : String, task_id~ : String, operation~ : String, description~ : String, timeout_ms~ : Int32)
+  PermissionResolved(session_id~ : String, request_id~ : String, decision~ : String, source~ : String)
   Error(code~ : ErrorCode, message~ : String, retryable~ : Bool)
 } derive(Eq, @debug.Debug)
 

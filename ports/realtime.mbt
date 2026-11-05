@@ -46,7 +46,16 @@ pub(open) trait RealtimeProvider {
   async fn next_event(Self) -> RealtimeEvent?
 
   /// Answer a `ToolCall` so the model can continue the turn.
-  async fn send_tool_result(Self, call_id : String, output : String) -> Unit
+  ///
+  /// `continue_turn = false` records the result without asking the model to
+  /// speak, which is what an interrupted turn needs: the user asked for
+  /// silence, so a late tool result must not start a new response.
+  async fn send_tool_result(
+    Self,
+    call_id : String,
+    output : String,
+    continue_turn : Bool,
+  ) -> Unit
 
   /// Sample rate the upstream expects for client audio.
   fn input_sample_rate(Self) -> Int32

@@ -2,17 +2,24 @@
 /// What a backend produces while it works on a task.
 ///
 /// The gateway turns these into northbound events: `TextDelta`/`TextDone`
-/// become speech, `ToolCall` and `PermissionRequest` become the P2 task and
-/// authorization flow.
+/// become speech, `Progress` becomes the `step` field of `task.updated`,
+/// `PermissionRequest` becomes a northbound permission prompt.
 pub(all) enum BackendEvent {
   /// Incremental assistant text.
   TextDelta(text~ : String)
   /// The complete assistant text for this task.
   TextDone(text~ : String)
+  /// A short human-readable step, such as "正在执行 `git status`". Not part of
+  /// the answer; the gateway forwards it as progress only.
+  Progress(text~ : String)
   /// The backend wants a tool executed. The gateway executes it and calls
   /// `respond_tool` with the result.
   ToolCall(call_id~ : String, name~ : String, arguments~ : String)
   /// The backend needs the user to approve an action before continuing.
+  ///
+  /// `operation` is a stable token (`read`, `edit`, `execute`, …); `description`
+  /// is human-readable text authored by the backend and must not be used for
+  /// decisions.
   PermissionRequest(
     request_id~ : String,
     operation~ : String,
@@ -23,6 +30,55 @@ pub(all) enum BackendEvent {
   /// The task finished successfully. Always the last event of a submission.
   Completed
 } derive(Eq, Debug)
+
+///|
+/// How long a remembered permission decision lasts.
+///
+/// The backend maps these onto whatever option vocabulary it has. A backend
+/// without an "always" option must fall back to `AllowOnce`; the gateway
+/// remembers the wider scope itself, so the user is not asked again either way.
+pub(all) enum PermissionDecision {
+  /// This request only.
+  AllowOnce
+  /// Every request for the current task.
+  AllowTask
+  /// Every request until the session ends.
+  AllowSession
+  /// Refuse this request.
+  Deny
+} derive(Eq, Debug)
+
+///|
+pub fn PermissionDecision::to_token(self : PermissionDecision) -> String {
+  match self {
+    AllowOnce => "allow_once"
+    AllowTask => "allow_task"
+    AllowSession => "allow_session"
+    Deny => "deny"
+  }
+}
+
+///|
+/// Parse a client-supplied decision token. Returns `None` for unknown tokens so
+/// a newer client cannot silently approve something.
+pub fn PermissionDecision::from_token(token : String) -> PermissionDecision? {
+  match token {
+    "allow_once" => Some(AllowOnce)
+    "allow_task" => Some(AllowTask)
+    "allow_session" => Some(AllowSession)
+    "deny" => Some(Deny)
+    _ => None
+  }
+}
+
+///|
+/// True when the decision approves the operation.
+pub fn PermissionDecision::allows(self : PermissionDecision) -> Bool {
+  match self {
+    Deny => false
+    _ => true
+  }
+}
 
 ///|
 /// A task backend behind the gateway.
@@ -43,8 +99,12 @@ pub(open) trait BackendPort {
   /// Answer a `ToolCall`.
   async fn respond_tool(Self, call_id : String, output : String) -> Unit
 
-  /// Answer a `PermissionRequest`. `allow` is the final decision.
-  async fn respond_permission(Self, request_id : String, allow : Bool) -> Unit
+  /// Answer a `PermissionRequest`. Idempotent; unknown IDs are ignored.
+  async fn respond_permission(
+    Self,
+    request_id : String,
+    decision : PermissionDecision,
+  ) -> Unit
 
   /// Block until the next event. `None` means the backend is closed.
   async fn next_event(Self) -> BackendEvent?

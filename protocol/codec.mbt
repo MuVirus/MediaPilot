@@ -49,6 +49,16 @@ fn string_field(
 }
 
 ///|
+/// Read an optional string field. A missing or null field yields `""` so an
+/// event from an older peer still decodes.
+fn optional_string_field(map : Map[String, Json], key : String) -> String {
+  match map.get(key) {
+    Some(Json::String(value)) => value
+    _ => ""
+  }
+}
+
+///|
 fn int_field(
   map : Map[String, Json],
   key : String,
@@ -131,6 +141,12 @@ pub fn encode_client_event(event : ClientEvent) -> Json {
         ("data", Json::string(data)),
         ("mimeType", Json::string(mime_type)),
       ])
+    PermissionRespond(request_id~, decision~) =>
+      make_object([
+        ("type", Json::string("permission.respond")),
+        ("requestId", Json::string(request_id)),
+        ("decision", Json::string(decision)),
+      ])
     Interrupt => make_object([("type", Json::string("session.interrupt"))])
     Close => make_object([("type", Json::string("session.close"))])
   }
@@ -181,6 +197,13 @@ fn decode_client_event_raise(
         ),
       )
     "session.interrupt" => Some(Interrupt)
+    "permission.respond" =>
+      Some(
+        PermissionRespond(
+          request_id=string_field(map, "requestId"),
+          decision=string_field(map, "decision"),
+        ),
+      )
     "session.close" => Some(Close)
     _ => None
   }
@@ -237,13 +260,39 @@ pub fn encode_server_event(event : ServerEvent) -> Json {
         ("sessionId", Json::string(session_id)),
         ("reason", Json::string(reason)),
       ])
-    TaskUpdated(session_id~, task_id~, status~, text~) =>
+    TaskUpdated(session_id~, task_id~, status~, text~, step~) =>
       make_object([
         ("type", Json::string("task.updated")),
         ("sessionId", Json::string(session_id)),
         ("taskId", Json::string(task_id)),
         ("status", Json::string(status)),
         ("text", Json::string(text)),
+        ("step", Json::string(step)),
+      ])
+    PermissionRequest(
+      session_id~,
+      request_id~,
+      task_id~,
+      operation~,
+      description~,
+      timeout_ms~
+    ) =>
+      make_object([
+        ("type", Json::string("permission.request")),
+        ("sessionId", Json::string(session_id)),
+        ("requestId", Json::string(request_id)),
+        ("taskId", Json::string(task_id)),
+        ("operation", Json::string(operation)),
+        ("description", Json::string(description)),
+        ("timeoutMs", Json::number(timeout_ms.to_double())),
+      ])
+    PermissionResolved(session_id~, request_id~, decision~, source~) =>
+      make_object([
+        ("type", Json::string("permission.resolved")),
+        ("sessionId", Json::string(session_id)),
+        ("requestId", Json::string(request_id)),
+        ("decision", Json::string(decision)),
+        ("source", Json::string(source)),
       ])
     Error(code~, message~, retryable~) =>
       make_object([
@@ -318,6 +367,27 @@ fn decode_server_event_raise(
           task_id=string_field(map, "taskId"),
           status=string_field(map, "status"),
           text=string_field(map, "text"),
+          step=optional_string_field(map, "step"),
+        ),
+      )
+    "permission.request" =>
+      Some(
+        PermissionRequest(
+          session_id=string_field(map, "sessionId"),
+          request_id=string_field(map, "requestId"),
+          task_id=string_field(map, "taskId"),
+          operation=string_field(map, "operation"),
+          description=string_field(map, "description"),
+          timeout_ms=int_field(map, "timeoutMs"),
+        ),
+      )
+    "permission.resolved" =>
+      Some(
+        PermissionResolved(
+          session_id=string_field(map, "sessionId"),
+          request_id=string_field(map, "requestId"),
+          decision=string_field(map, "decision"),
+          source=string_field(map, "source"),
         ),
       )
     "error" =>

@@ -3,7 +3,7 @@
 ///
 /// Additive changes bump the minor; any breaking change to a client-visible
 /// event or field bumps the major. See `docs/contract.md`.
-pub let protocol_version : String = "0.3.0"
+pub let protocol_version : String = "0.4.0"
 
 ///|
 /// Capability IDs are the only stable feature check for clients.
@@ -31,10 +31,15 @@ pub let capability_playback_clear : String = "realtime.playback-clear"
 pub let capability_task : String = "realtime.task"
 
 ///|
+/// The gateway asks the client to approve a backend action and waits for an
+/// answer (`permission.request` / `permission.respond`).
+pub let capability_permission : String = "realtime.permission"
+
+///|
 pub fn all_capabilities() -> Array[String] {
   [
     capability_session, capability_audio_in, capability_audio_out, capability_text_in,
-    capability_interrupt, capability_playback_clear, capability_task,
+    capability_interrupt, capability_playback_clear, capability_task, capability_permission,
   ]
 }
 
@@ -108,6 +113,9 @@ pub(all) enum ClientEvent {
   )
   Text(text~ : String)
   ImageAppend(data~ : String, mime_type~ : String)
+  /// Answer a pending `permission.request`. `decision` is one of
+  /// `allow_once`, `allow_task`, `allow_session`, `deny`.
+  PermissionRespond(request_id~ : String, decision~ : String)
   Interrupt
   Close
 } derive(Eq, Debug)
@@ -134,12 +142,36 @@ pub(all) enum ServerEvent {
   /// `user_interruption`; clients must not branch on free-form text.
   PlaybackClear(session_id~ : String, reason~ : String)
   /// Background task progress. `status` is one of `running`, `completed`,
-  /// `failed`; `text` carries the accumulated result so far and may be empty.
+  /// `failed`; `text` carries the accumulated result so far and may be empty;
+  /// `step` is a short human-readable progress line and may be empty.
   TaskUpdated(
     session_id~ : String,
     task_id~ : String,
     status~ : String,
-    text~ : String
+    text~ : String,
+    step~ : String
+  )
+  /// The backend needs approval before it can continue.
+  ///
+  /// `operation` is a stable token (`read`, `edit`, `execute`, …);
+  /// `description` is backend-authored text and must not drive decisions.
+  /// `timeout_ms` says how long the gateway waits before treating the request
+  /// as `deny`.
+  PermissionRequest(
+    session_id~ : String,
+    request_id~ : String,
+    task_id~ : String,
+    operation~ : String,
+    description~ : String,
+    timeout_ms~ : Int32
+  )
+  /// A permission request is no longer pending. `source` is one of `client`,
+  /// `timeout`, `policy`, `cancelled`.
+  PermissionResolved(
+    session_id~ : String,
+    request_id~ : String,
+    decision~ : String,
+    source~ : String
   )
   Error(code~ : ErrorCode, message~ : String, retryable~ : Bool)
 } derive(Eq, Debug)

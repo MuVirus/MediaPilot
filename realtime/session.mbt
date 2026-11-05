@@ -100,8 +100,15 @@ async fn DashScopeSession::recv_event(
               self.response_active = false
               None
             }
-            FunctionCall(call_id~, name~, arguments~) =>
+            FunctionCall(call_id~, name~, arguments~) => {
+              // The response that carried the call is over: `response.done` is
+              // queued behind this frame but the gateway will not read it until
+              // after the tool finishes. Treating the response as still active
+              // makes an interrupt send `response.cancel`, which DashScope
+              // rejects with "Conversation has no active response.".
+              self.response_active = false
               Some(@ports.RealtimeEvent::ToolCall(call_id~, name~, arguments~))
+            }
             _ =>
               match to_server_event(self.session_id, provider_event) {
                 Some(server_event) =>
@@ -256,9 +263,12 @@ pub async fn DashScopeSession::send_tool_result(
   self : DashScopeSession,
   call_id : String,
   output : String,
+  continue_turn : Bool,
 ) -> Unit raise ProviderError {
   send_frame(self.ws, encode_function_output(call_id, output).stringify())
-  send_frame(self.ws, encode_response_create().stringify())
+  if continue_turn {
+    send_frame(self.ws, encode_response_create().stringify())
+  }
 }
 
 ///|
@@ -313,8 +323,9 @@ pub impl @ports.RealtimeProvider for DashScopeSession with fn send_tool_result(
   self,
   call_id,
   output,
+  continue_turn,
 ) {
-  self.send_tool_result(call_id, output) catch {
+  self.send_tool_result(call_id, output, continue_turn) catch {
     _ => ()
   }
 }

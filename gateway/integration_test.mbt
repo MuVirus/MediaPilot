@@ -8,7 +8,7 @@ struct FakeProvider {
   sent_audio : Array[String]
   sent_text : Array[String]
   mut interrupted : Bool
-  tool_results : Array[(String, String)]
+  tool_results : Array[(String, String, Bool)]
   mut closed : Bool
   events : @aqueue.Queue[@ports.RealtimeEvent?]
 }
@@ -80,8 +80,9 @@ pub impl @ports.RealtimeProvider for FakeProvider with fn send_tool_result(
   self,
   call_id,
   output,
+  continue_turn,
 ) {
-  self.tool_results.push((call_id, output))
+  self.tool_results.push((call_id, output, continue_turn))
 }
 
 ///|
@@ -105,14 +106,33 @@ fn fake_factory(provider : FakeProvider) -> @gateway.ProviderFactory {
 
 ///|
 /// A scripted backend that answers every task with a fixed string.
+///
+/// When `permission_asks` is non-zero it first asks that many times and blocks
+/// until the gateway answers, which is what a real ACP agent does.
 struct FakeBackend {
   submitted : Array[String]
   events : @aqueue.Queue[@ports.BackendEvent?]
+  permissions : Array[(String, @ports.PermissionDecision)]
+  answers : @aqueue.Queue[@ports.PermissionDecision]
+  mut permission_asks : Int32
 }
 
 ///|
 fn FakeBackend::new() -> FakeBackend {
-  { submitted: [], events: @aqueue.Queue(kind=Blocking(16)), }
+  {
+    submitted: [],
+    events: @aqueue.Queue(kind=Blocking(16)),
+    permissions: [],
+    answers: @aqueue.Queue(kind=Blocking(4)),
+    permission_asks: 0,
+  }
+}
+
+///|
+fn FakeBackend::with_permission(permission_asks : Int32) -> FakeBackend {
+  let backend = FakeBackend::new()
+  backend.permission_asks = permission_asks
+  backend
 }
 
 ///|
@@ -122,6 +142,33 @@ pub impl @ports.BackendPort for FakeBackend with fn submit(
   instruction,
 ) {
   self.submitted.push(instruction)
+  let mut ask = 0
+  while ask < self.permission_asks {
+    ask = ask + 1
+    let request_id = "p-" + ask.to_string()
+    self.events.put(
+      Some(
+        @ports.BackendEvent::PermissionRequest(
+          request_id~,
+          operation="execute",
+          description="run `moon test`",
+        ),
+      ),
+    )
+    let decision = self.answers.get()
+    if !decision.allows() {
+      self.events.put(
+        Some(
+          @ports.BackendEvent::Failed(
+            code=@protocol.ErrorCode::InvalidEvent,
+            message="permission denied",
+            retryable=false,
+          ),
+        ),
+      )
+      return
+    }
+  }
   let answer = "agent answer: " + instruction
   self.events.put(Some(@ports.BackendEvent::TextDelta(text="agent ")))
   self.events.put(Some(@ports.BackendEvent::TextDelta(text="answer")))
@@ -145,11 +192,12 @@ pub impl @ports.BackendPort for FakeBackend with fn respond_tool(
 
 ///|
 pub impl @ports.BackendPort for FakeBackend with fn respond_permission(
-  _self,
-  _request_id,
-  _allow,
+  self,
+  request_id,
+  decision,
 ) {
-
+  self.permissions.push((request_id, decision))
+  self.answers.put(decision)
 }
 
 ///|
@@ -202,6 +250,22 @@ async fn hello(ws : @websocket.Conn) -> Unit {
       capabilities=[
         @protocol.capability_audio_in, @protocol.capability_audio_out, @protocol.capability_text_in,
         @protocol.capability_interrupt,
+      ],
+    ),
+  )
+}
+
+///|
+/// Handshake as a client that also understands permission prompts.
+async fn hello_with_permission(ws : @websocket.Conn) -> Unit {
+  send_client(
+    ws,
+    @protocol.ClientEvent::Hello(
+      request_id="c-1",
+      protocol_version=@protocol.protocol_version,
+      capabilities=[
+        @protocol.capability_audio_in, @protocol.capability_audio_out, @protocol.capability_text_in,
+        @protocol.capability_interrupt, @protocol.capability_task, @protocol.capability_permission,
       ],
     ),
   )
@@ -552,7 +616,8 @@ async test "delegate_task runs the backend and answers the tool call" {
     @async.sleep(120)
     assert_eq(backend.submitted, ["查一下明天杭州的天气"])
     assert_eq(provider.tool_results.length(), 1)
-    let (call_id, output) = provider.tool_results[0]
+    let (call_id, output, continue_turn) = provider.tool_results[0]
+    assert_true(continue_turn)
     assert_eq(call_id, "call-1")
     assert_true(output.contains("agent answer"))
   })
@@ -569,7 +634,200 @@ async test "unknown tools are rejected without calling the backend" {
     @async.sleep(120)
     assert_eq(backend.submitted, [])
     assert_eq(provider.tool_results.length(), 1)
-    let (_, output) = provider.tool_results[0]
+    let (_, output, _) = provider.tool_results[0]
     assert_true(output.contains("unknown tool"))
+  })
+}
+
+///|
+/// Read events until a permission request arrives. Returns its id, or "".
+async fn await_permission_request(
+  ws : @websocket.Conn,
+  max_events : Int32,
+) -> String {
+  for _ in 0..<max_events {
+    match read_event(ws) {
+      Some(@protocol.ServerEvent::PermissionRequest(request_id~, ..)) =>
+        return request_id
+      Some(_) => ()
+      None => break
+    }
+  }
+  ""
+}
+
+///|
+async test "permission request is approved once and the task continues" {
+  let provider = FakeProvider::new()
+  let backend = FakeBackend::with_permission(1)
+  with_gateway_backend(provider, Some(backend), async fn(ws) {
+    hello_with_permission(ws)
+    let _ = read_event(ws)
+    provider.push_tool_call(
+      "call-1", "delegate_task", "{\"instruction\":\"跑一下测试\"}",
+    )
+    let captured = await_permission_request(ws, 10)
+    assert_true(captured != "")
+    send_client(
+      ws,
+      @protocol.ClientEvent::PermissionRespond(
+        request_id=captured,
+        decision="allow_once",
+      ),
+    )
+    let mut completed = ""
+    let mut resolved = false
+    for _ in 0..<20 {
+      match read_event(ws) {
+        Some(
+          @protocol.ServerEvent::PermissionResolved(
+            request_id~,
+            decision~,
+            source~,
+            ..
+          )
+        ) =>
+          if request_id == captured {
+            assert_eq(decision, "allow_once")
+            assert_eq(source, "client")
+            resolved = true
+          }
+        Some(@protocol.ServerEvent::TaskUpdated(status~, text~, ..)) =>
+          if status == "completed" {
+            completed = text
+            break
+          }
+        Some(_) => ()
+        None => break
+      }
+    }
+    assert_true(resolved)
+    assert_eq(completed, "agent answer: 跑一下测试")
+    assert_eq(backend.permissions.length(), 1)
+    assert_eq(
+      backend.permissions[0],
+      (captured, @ports.PermissionDecision::AllowOnce),
+    )
+    let (_, output, continue_turn) = provider.tool_results[0]
+    assert_true(output.contains("agent answer"))
+    assert_true(continue_turn)
+  })
+}
+
+///|
+async test "denying permission fails the task without a spoken answer" {
+  let provider = FakeProvider::new()
+  let backend = FakeBackend::with_permission(1)
+  with_gateway_backend(provider, Some(backend), async fn(ws) {
+    hello_with_permission(ws)
+    let _ = read_event(ws)
+    provider.push_tool_call(
+      "call-1", "delegate_task", "{\"instruction\":\"删除全部文件\"}",
+    )
+    let captured = await_permission_request(ws, 10)
+    assert_true(captured != "")
+    send_client(
+      ws,
+      @protocol.ClientEvent::PermissionRespond(
+        request_id=captured,
+        decision="deny",
+      ),
+    )
+    let mut failed = false
+    for _ in 0..<20 {
+      match read_event(ws) {
+        Some(@protocol.ServerEvent::TaskUpdated(status~, ..)) =>
+          if status == "failed" {
+            failed = true
+            break
+          }
+        Some(_) => ()
+        None => break
+      }
+    }
+    assert_true(failed)
+    assert_eq(
+      backend.permissions[0],
+      (captured, @ports.PermissionDecision::Deny),
+    )
+    let (_, output, _) = provider.tool_results[0]
+    assert_true(output.contains("permission denied"))
+  })
+}
+
+///|
+async test "session grant answers later requests without prompting again" {
+  let provider = FakeProvider::new()
+  let backend = FakeBackend::with_permission(2)
+  with_gateway_backend(provider, Some(backend), async fn(ws) {
+    hello_with_permission(ws)
+    let _ = read_event(ws)
+    provider.push_tool_call(
+      "call-1", "delegate_task", "{\"instruction\":\"x\"}",
+    )
+    let captured = await_permission_request(ws, 10)
+    assert_true(captured != "")
+    send_client(
+      ws,
+      @protocol.ClientEvent::PermissionRespond(
+        request_id=captured,
+        decision="allow_session",
+      ),
+    )
+    let mut policy = false
+    let mut completed = false
+    for _ in 0..<24 {
+      match read_event(ws) {
+        Some(
+          @protocol.ServerEvent::PermissionResolved(request_id~, source~, ..)
+        ) => if request_id == "p-2" && source == "policy" { policy = true }
+        Some(@protocol.ServerEvent::PermissionRequest(..)) =>
+          fail("the gateway asked again after a session grant")
+        Some(@protocol.ServerEvent::TaskUpdated(status~, ..)) =>
+          if status == "completed" {
+            completed = true
+            break
+          }
+        Some(_) => ()
+        None => break
+      }
+    }
+    assert_true(policy)
+    assert_true(completed)
+    assert_eq(backend.permissions.length(), 2)
+    assert_eq(
+      backend.permissions[1],
+      ("p-2", @ports.PermissionDecision::AllowSession),
+    )
+  })
+}
+
+///|
+async test "clients without the permission capability are denied by policy" {
+  let provider = FakeProvider::new()
+  let backend = FakeBackend::with_permission(1)
+  with_gateway_backend(provider, Some(backend), async fn(ws) {
+    // Old client: it did not advertise `realtime.permission`.
+    hello(ws)
+    let _ = read_event(ws)
+    provider.push_tool_call(
+      "call-1", "delegate_task", "{\"instruction\":\"x\"}",
+    )
+    let mut resolved = ""
+    for _ in 0..<10 {
+      match read_event(ws) {
+        Some(@protocol.ServerEvent::PermissionResolved(decision~, source~, ..)) => {
+          assert_eq(source, "policy")
+          resolved = decision
+          break
+        }
+        Some(@protocol.ServerEvent::PermissionRequest(..)) =>
+          fail("must not prompt a client that did not advertise the capability")
+        Some(_) => ()
+        None => break
+      }
+    }
+    assert_eq(resolved, "deny")
+    assert_eq(backend.permissions[0].1, @ports.PermissionDecision::Deny)
   })
 }

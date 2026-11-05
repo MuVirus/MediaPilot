@@ -22,6 +22,17 @@
 
       <p id="status" class="status">未连接</p>
 
+      <section id="permission" class="permission hidden">
+        <h2>需要批准</h2>
+        <p id="permission-text" class="permission-text"></p>
+        <div class="controls">
+          <button id="allow-once" type="button">允许一次</button>
+          <button id="allow-task" type="button">本次任务都允许</button>
+          <button id="allow-session" type="button">本会话都允许</button>
+          <button id="deny" type="button">拒绝</button>
+        </div>
+      </section>
+
       <section>
         <h2>对话</h2>
         <div id="transcript" class="transcript"></div>

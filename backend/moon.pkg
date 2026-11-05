@@ -1,6 +1,8 @@
 import {
+  "moonbitlang/core/async",
   "moonbitlang/core/async/aqueue",
   "moonbitlang/core/async/http",
+  "moonbitlang/core/async/process",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
   "MuVirus/MediaPilot/ports",
@@ -9,9 +11,11 @@ import {
 
 import {
   "moonbitlang/core/async",
+  "moonbitlang/core/async/aqueue",
   "moonbitlang/core/async/http",
   "moonbitlang/core/async/socket",
   "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
   "MuVirus/MediaPilot/ports",
   "MuVirus/MediaPilot/protocol",
 } for "test"
@@ -21,6 +25,7 @@ options(
     "moonbitlang/core/async",
     "moonbitlang/core/async/aqueue",
     "moonbitlang/core/async/http",
+    "moonbitlang/core/async/process",
     "moonbitlang/core/async/socket",
   ],
 )
