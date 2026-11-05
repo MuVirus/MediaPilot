@@ -20,6 +20,9 @@ pub(all) struct AcpConfig {
   /// Absolute working directory the agent may operate in.
   cwd : String
   inherit_env : Bool
+  /// Model ID to select through `session/set_config_option`. Empty leaves the
+  /// agent's own default alone.
+  model : String
 } derive(Eq, Debug)
 
 ///|
@@ -56,6 +59,9 @@ pub struct AcpBackend {
   /// Pending permission requests: gateway request id -> agent slot.
   priv permissions : Map[String, AcpPermission]
   write_lock : @async.Mutex
+  /// Serializes connection setup and task execution: only one reader may own
+  /// the agent's stdout at a time.
+  priv setup_lock : @async.Mutex
   mut child : @process.OrphanProcess?
   mut next_id : Int64
   mut session_id : String
@@ -75,6 +81,7 @@ pub fn AcpBackend::new(config : AcpConfig) -> AcpBackend {
     pending: Map([]),
     permissions: Map([]),
     write_lock: @async.Mutex(),
+    setup_lock: @async.Mutex(),
     child: None,
     next_id: 1,
     session_id: "",
@@ -633,39 +640,81 @@ fn cancel_params(session_id : String) -> Json {
 }
 
 ///|
+/// Spawn the agent and create a session if needed.
+///
+/// The caller holds `setup_lock` and is running the stdout reader. Returns
+/// false when setup failed; the failure is already queued.
+async fn AcpBackend::ensure_session(self : AcpBackend) -> Bool {
+  if self.session_id != "" {
+    return true
+  }
+  if !self.ensure_started() {
+    return false
+  }
+  let responded = match self.request("initialize", initialize_params(), 20000) {
+    Some(response) => response
+    None => return false
+  }
+  if response_result(responded) is None {
+    self.fail(
+      @protocol.ErrorCode::InvalidEvent,
+      "ACP initialize returned no result",
+    )
+    return false
+  }
+  let created = match
+    self.request("session/new", new_session_params(self.config.cwd), 30000) {
+    Some(response) => response
+    None => return false
+  }
+  match response_result_string(created, "sessionId") {
+    Some(session_id) => {
+      self.session_id = session_id
+      if self.config.model != "" {
+        let selected = self.request(
+          "session/set_config_option",
+          Json::object({
+            "sessionId": Json::string(session_id),
+            "configId": Json::string("model"),
+            "value": Json::string(self.config.model),
+          }),
+          15000,
+        )
+        if selected is None {
+          self.session_id = ""
+          return false
+        }
+      }
+      true
+    }
+    None => {
+      self.fail(
+        @protocol.ErrorCode::InvalidEvent,
+        "ACP session/new returned no sessionId",
+      )
+      false
+    }
+  }
+}
+
+///|
+/// Drop events left over from a failed warmup. Only called when no consumer is
+/// active, so nothing real can be lost.
+fn AcpBackend::drain_events(self : AcpBackend) -> Unit {
+  for ;; {
+    let item = self.events.try_get() catch { _ => break }
+    match item {
+      Some(_) => ()
+      None => break
+    }
+  }
+}
+
+///|
 /// Connect and create a session if needed, then run one prompt.
 async fn AcpBackend::run_turn(self : AcpBackend, instruction : String) -> Unit {
-  if self.session_id == "" {
-    let responded = match
-      self.request("initialize", initialize_params(), 20000) {
-      Some(response) => response
-      None => return
-    }
-    match response_result(responded) {
-      Some(_) => ()
-      None => {
-        self.fail(
-          @protocol.ErrorCode::InvalidEvent,
-          "ACP initialize returned no result",
-        )
-        return
-      }
-    }
-    let created = match
-      self.request("session/new", new_session_params(self.config.cwd), 30000) {
-      Some(response) => response
-      None => return
-    }
-    match response_result_string(created, "sessionId") {
-      Some(session_id) => self.session_id = session_id
-      None => {
-        self.fail(
-          @protocol.ErrorCode::InvalidEvent,
-          "ACP session/new returned no sessionId",
-        )
-        return
-      }
-    }
+  if !self.ensure_session() {
+    return
   }
   let id = self.next_id
   self.next_id = id + 1
@@ -695,6 +744,30 @@ async fn AcpBackend::run_turn(self : AcpBackend, instruction : String) -> Unit {
 // ---------------------------------------------------------------------------
 
 ///|
+/// Start the agent and create its session before the first task, so the first
+/// real task does not pay the process and handshake cost.
+async fn AcpBackend::warmup(self : AcpBackend) -> Unit {
+  if self.closed {
+    return
+  }
+  self.setup_lock.acquire()
+  defer self.setup_lock.release()
+  if self.closed || self.session_id != "" {
+    return
+  }
+  // The child must exist before the reader starts, otherwise the reader sees
+  // `child = None` and exits instead of consuming the initialize response.
+  if !self.ensure_started() {
+    return
+  }
+  @async.with_task_group() <| group => {
+    group.spawn_bg(no_wait=true) <| () => { self.read_loop() }
+    group.spawn_bg(no_wait=true) <| () => { self.stderr_loop() }
+    let _ = self.ensure_session()
+  }
+}
+
+///|
 async fn AcpBackend::submit(
   self : AcpBackend,
   _task_id : String,
@@ -703,8 +776,13 @@ async fn AcpBackend::submit(
   if self.closed {
     return
   }
+  // Warmup and submit must never read stdout at the same time.
+  self.setup_lock.acquire()
+  defer self.setup_lock.release()
   self.cancelled = false
   self.turn_text = ""
+  self.drain_events()
+  // The child must exist before the reader starts.
   if !self.ensure_started() {
     return
   }
@@ -838,6 +916,11 @@ async fn AcpBackend::close(self : AcpBackend) -> Unit {
   }
   self.terminate()
   self.events.put(None)
+}
+
+///|
+pub impl @ports.BackendPort for AcpBackend with fn warmup(self) {
+  self.warmup()
 }
 
 ///|

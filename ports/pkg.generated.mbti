@@ -46,6 +46,7 @@ pub(all) enum RealtimeEvent {
 
 // Traits
 pub(open) trait BackendPort {
+  async fn warmup(Self) -> Unit
   async fn submit(Self, String, String) -> Unit
   async fn cancel(Self, String) -> Unit
   async fn respond_tool(Self, String, String) -> Unit

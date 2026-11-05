@@ -90,6 +90,11 @@ pub fn PermissionDecision::allows(self : PermissionDecision) -> Bool {
 /// `submit` returns when the task finishes. `next_event` returns `None` only
 /// after `close`.
 pub(open) trait BackendPort {
+  /// Prepare the backend before the first task, so the user does not pay the
+  /// connection cost while waiting for an answer. Idempotent; safe to call
+  /// concurrently with `submit`. Failures are reported when a task runs.
+  async fn warmup(Self) -> Unit
+
   /// Run one task to completion, emitting events as they occur.
   async fn submit(Self, task_id : String, instruction : String) -> Unit
 

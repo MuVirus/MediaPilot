@@ -157,6 +157,12 @@ async fn send_error(
 }
 
 ///|
+/// The LLM backend opens a connection per request, so there is nothing to warm.
+async fn LlmBackend::warmup(self : LlmBackend) -> Unit {
+  let _ = self
+}
+
+///|
 /// Run one chat completion and stream the answer into the event queue.
 async fn LlmBackend::submit(
   self : LlmBackend,
@@ -324,6 +330,11 @@ async fn LlmBackend::close(self : LlmBackend) -> Unit {
     self.closed = true
     self.events.put(None)
   }
+}
+
+///|
+pub impl @ports.BackendPort for LlmBackend with fn warmup(self) {
+  self.warmup()
 }
 
 ///|

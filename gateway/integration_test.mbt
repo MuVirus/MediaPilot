@@ -115,6 +115,7 @@ struct FakeBackend {
   permissions : Array[(String, @ports.PermissionDecision)]
   answers : @aqueue.Queue[@ports.PermissionDecision]
   mut permission_asks : Int32
+  mut warmed : Bool
 }
 
 ///|
@@ -125,6 +126,7 @@ fn FakeBackend::new() -> FakeBackend {
     permissions: [],
     answers: @aqueue.Queue(kind=Blocking(4)),
     permission_asks: 0,
+    warmed: false,
   }
 }
 
@@ -133,6 +135,11 @@ fn FakeBackend::with_permission(permission_asks : Int32) -> FakeBackend {
   let backend = FakeBackend::new()
   backend.permission_asks = permission_asks
   backend
+}
+
+///|
+pub impl @ports.BackendPort for FakeBackend with fn warmup(self) {
+  self.warmed = true
 }
 
 ///|
@@ -654,6 +661,25 @@ async fn await_permission_request(
     }
   }
   ""
+}
+
+///|
+async test "backend is warmed before the first task" {
+  let provider = FakeProvider::new()
+  let backend = FakeBackend::new()
+  with_gateway_backend(provider, Some(backend), async fn(ws) {
+    hello(ws)
+    let _ = read_event(ws)
+    let mut warmed = false
+    for _ in 0..<40 {
+      if backend.warmed {
+        warmed = true
+        break
+      }
+      @async.sleep(50)
+    }
+    assert_true(warmed)
+  })
 }
 
 ///|

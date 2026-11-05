@@ -53,6 +53,7 @@ async fn main {
     args: [env_or("MEDIAPILOT_ACP_MODE", "acp")],
     cwd: acp_cwd,
     inherit_env: true,
+    model: env_or("MEDIAPILOT_ACP_MODEL", ""),
   }
   println("[gateway] model=" + config.model)
   println("[gateway] voice=" + config.voice)

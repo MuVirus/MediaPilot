@@ -5,6 +5,7 @@ fn test_backend() -> AcpBackend {
     args: ["acp"],
     cwd: ".",
     inherit_env: true,
+    model: "",
   })
 }
 

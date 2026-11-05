@@ -134,3 +134,45 @@ button:disabled {
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+.agent {
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  margin: 1rem 0;
+  background: #f8fafc;
+}
+
+.agent.hidden {
+  display: none;
+}
+
+.agent h2 {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+}
+
+.agent-state {
+  font-size: 0.8rem;
+  font-weight: normal;
+  color: #b45309;
+}
+
+.agent-step {
+  margin: 0 0 0.4rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.agent-text {
+  margin: 0;
+  max-height: 12rem;
+  overflow: auto;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

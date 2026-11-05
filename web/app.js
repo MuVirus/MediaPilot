@@ -23,6 +23,10 @@ const els = {
   log: document.getElementById("log"),
   permission: document.getElementById("permission"),
   permissionText: document.getElementById("permission-text"),
+  agent: document.getElementById("agent"),
+  agentState: document.getElementById("agent-state"),
+  agentStep: document.getElementById("agent-step"),
+  agentText: document.getElementById("agent-text"),
 };
 
 let ws = null;
@@ -45,6 +49,8 @@ let assistantLine = null;
 let userLine = null;
 let permissionRequestId = "";
 let permissionTimer = null;
+let agentStartedAt = 0;
+let agentTimer = null;
 
 function log(message) {
   const line = `${new Date().toLocaleTimeString()} ${message}`;
@@ -190,6 +196,38 @@ function answerPermission(decision) {
   }
 }
 
+function hideAgent() {
+  agentStartedAt = 0;
+  if (agentTimer) {
+    clearInterval(agentTimer);
+    agentTimer = null;
+  }
+  els.agent.classList.add("hidden");
+  els.agentState.textContent = "";
+  els.agentStep.textContent = "";
+  els.agentText.textContent = "";
+}
+
+function showAgent() {
+  if (agentStartedAt) return;
+  agentStartedAt = Date.now();
+  els.agent.classList.remove("hidden");
+  const tick = () => {
+    const seconds = ((Date.now() - agentStartedAt) / 1000).toFixed(1);
+    els.agentState.textContent = `处理中 ${seconds}s`;
+  };
+  tick();
+  agentTimer = setInterval(tick, 200);
+}
+
+function finishAgent(label) {
+  if (agentTimer) {
+    clearInterval(agentTimer);
+    agentTimer = null;
+  }
+  els.agentState.textContent = label;
+}
+
 function handleServerEvent(event) {
   switch (event.type) {
     case "session.ready":
@@ -197,6 +235,7 @@ function handleServerEvent(event) {
       reconnectAttempt = 0;
       receivedAudioSeconds = 0;
       taskLine = "";
+      hideAgent();
       log(`ready session=${event.sessionId}`);
       refreshStatus();
       break;
@@ -218,20 +257,27 @@ function handleServerEvent(event) {
       stopPlayback();
       // A new user turn starts here, so the next transcript lines are new.
       resetLines();
+      if (event.reason === "user_interruption") hideAgent();
       break;
     case "task.updated":
+      showAgent();
+      if (event.step) els.agentStep.textContent = event.step;
+      if (event.text) els.agentText.textContent = event.text;
       if (event.status === "running") {
         taskLine = event.step
           ? `代理处理中 ${event.text.length} 字 · ${event.step}`
           : `代理处理中 ${event.text.length} 字`;
       } else if (event.status === "completed") {
         taskLine = `代理完成 ${event.text.length} 字`;
+        finishAgent(`完成，用时 ${((Date.now() - agentStartedAt) / 1000).toFixed(1)}s`);
         log(`task ${event.taskId} completed`);
       } else if (event.status === "cancelled") {
         taskLine = "代理已取消";
+        finishAgent("已取消");
         log(`task ${event.taskId} cancelled`);
       } else {
         taskLine = "代理失败";
+        finishAgent("失败");
         log(`task ${event.taskId} failed: ${event.text}`);
       }
       refreshStatus();
@@ -377,6 +423,7 @@ function clearReconnect() {
 function teardown() {
   clearReconnect();
   hidePermission();
+  hideAgent();
   if (workletNode) {
     workletNode.port.onmessage = null;
     workletNode.disconnect();

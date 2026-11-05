@@ -46,6 +46,7 @@ pub(all) struct AcpConfig {
   args : Array[String]
   cwd : String
   inherit_env : Bool
+  model : String
 } derive(Eq, @debug.Debug)
 
 pub struct LlmBackend {

@@ -421,6 +421,13 @@ async fn bridge(
     can_ask: capabilities.contains(@protocol.capability_permission),
   }
   @async.with_task_group() <| group => {
+    // Prepare the backend while the user is still talking, so the first
+    // delegated task does not pay the process and handshake cost.
+    match backend {
+      Some(backend) =>
+        group.spawn_bg(no_wait=true) <| () => { backend.warmup() }
+      None => ()
+    }
     group.spawn_bg(no_wait=true) <| () => {
       client_pump(ws, provider, flow, client_closing, backend)
       done.put(())

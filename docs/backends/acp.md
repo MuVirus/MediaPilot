@@ -40,6 +40,15 @@ session/cancel    { sessionId }                     // 通知，取消进行中�
 `initialize` 超时 20 秒，`session/new` 超时 30 秒，`session/prompt` 不设超时：长任务
 可以跑几分钟，由用户的 `session.interrupt` 结束。
 
+### 预热
+
+会话建立后，网关立刻在后台调用 `BackendPort::warmup`：启动进程、`initialize`、
+`session/new`。用户说完第一句话到模型决定调用工具之间通常有 1–2 秒，预热就在这段
+时间完成，所以第一个任务不再额外等 2–3 秒的握手。
+
+预热与任务用同一把锁串行：同一时刻只有一个 reader 可以在读 agent 的 stdout。预热
+失败不产生北向事件，下一次任务会重新尝试并正常报错。
+
 ## 事件映射
 
 `session/update` 通知按 `update.sessionUpdate` 分发：
@@ -97,13 +106,19 @@ agent 没有提供匹配项时回 `{"outcome":{"outcome":"cancelled"}}`，绝不
 | `MEDIAPILOT_ACP_COMMAND` | `opencode` | agent 可执行文件；Windows 必须是 `.exe`，不能是 npm 的 `.cmd`/`.ps1` 包装 |
 | `MEDIAPILOT_ACP_MODE` | `acp` | 传给可执行文件的第一个参数 |
 | `MEDIAPILOT_ACP_CWD` | 进程当前目录的绝对路径 | agent 的工作目录，必须是绝对路径 |
+| `MEDIAPILOT_ACP_MODEL` | 空（用 agent 自己的默认模型） | 通过 `session/set_config_option` 选择的模型 ID |
 
 ```powershell
 $env:MEDIAPILOT_BACKEND = "acp"
 $env:MEDIAPILOT_ACP_COMMAND = "$env:APPDATA\npm\node_modules\@opencode\cli\bin\opencode.exe"
 $env:MEDIAPILOT_ACP_CWD = (Get-Location).Path
+$env:MEDIAPILOT_ACP_MODEL = "deepseek/deepseek-v4-pro"
 moon run cmd/main --target native
 ```
+
+`MEDIAPILOT_ACP_MODEL` 不是必须的，但 agent 的默认模型可能不可用。opencode 的
+默认模型由它自己的配置和远端目录决定，MediaPilot 不猜；要让语音任务稳定，显式选一个
+可用模型更可靠。
 
 agent 自己的权限策略（例如哪些命令需要确认）由 opencode 的配置文件决定，不是
 MediaPilot 的配置。MediaPilot 只在 agent 发来请求时询问用户。
@@ -119,6 +134,9 @@ MediaPilot 的配置。MediaPilot 只在 agent 发来请求时询问用户。
 - 打断长任务：`playback.clear` → `task.updated(status=cancelled)` → 不再播报；
   同一会话随后仍能正常回答新问题。
 - `deny`：agent 收到拒绝并以“用户拒绝”继续，模型向用户解释，不执行命令。
+- 首次委派时延（文本输入，`echo hi`）：预热前 9.9 秒到首段音频，预热并显式选模型后
+  4.6 秒。剩下的时间主要是 agent 自己的模型往返，不是网关或浏览器。
+- 会话结束时子进程会被回收：先关 stdin 等 1.5 秒，不退出就 `taskkill` / `kill -9`。
 
 ## 已知限制
 
