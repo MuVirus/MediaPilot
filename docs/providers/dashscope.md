@@ -9,12 +9,17 @@
 
 ## 模型能力
 
-不同模型族的差异不只是名字，`tools` 和 `turn_detection` 都必须按模型选：
+官方文档说 Qwen-Audio-Realtime 和 Qwen-Omni-Realtime 两个系列都支持工具调用，
+实测基本成立，但**有一个模型例外**，而且 `turn_detection` 必须按系列选：
 
 | 模型 | function calling | `turn_detection` | 默认 voice |
 | --- | --- | --- | --- |
-| `qwen-audio-3.1-realtime-flash` | 否 | `smart_turn_v2` | `longanqian_v3.1` |
+| `qwen-audio-3.1-realtime-plus` | 是（文本 + 语音均验证） | `smart_turn_v2` | `longanqian_v3.1` |
+| `qwen-audio-3.1-realtime-flash` | **否**（见下） | `smart_turn_v2` | `longanqian_v3.1` |
+| `qwen-audio-3.0-realtime-plus` | 是 | `smart_turn_v2` | `longanqian` |
+| `qwen-audio-3.0-realtime-flash` | 是 | `smart_turn_v2` | `longanqian` |
 | `qwen3.5-omni-flash-realtime` | 是 | `semantic_vad` | `Ethan` |
+| `qwen3.5-omni-plus-realtime` | 是 | `semantic_vad` | `Ethan` |
 | `qwen3.8-omni-flash-realtime` | 是 | `semantic_vad` | `Tina` |
 
 两个坑，都是实测出来的：
@@ -23,10 +28,15 @@
    `session.updated`，看起来接受了，但之后每次生成都以
    `response.done.status = "failed"` 结束，`reason` 是
    `An internal error occurred while generating the response.`，音频和转写都是空的。
-   连"你好"这种不会触发工具的问题也一样。所以这个模型**不能**用于方案 A。
+   连"你好"这种不会触发工具的问题也一样，连续三次稳定复现。
+   同系列的 `3.1-plus`、`3.0-plus`、`3.0-flash` 都正常，所以这是**单个模型**的问题，
+   不是系列限制。选型时避开它即可。
 2. **omni 模型用 `smart_turn_v2` 时音频轮次不会提交。** 用户转写 delta 会到，
    但没有 `speech_stopped` / `committed`，也就没有回复。换成 `semantic_vad` 后
    完整轮次正常。
+
+诊断技巧：如果 `instructions` 里要求调用某个工具，但 `session.update` 没带 `tools`，
+模型会把 `<tool_call>` 当普通文本念出来。看到这个字符串就说明工具没注册成功。
 
 ## 连接
 
@@ -165,8 +175,12 @@ response.done
 
 然后发 `response.create`，模型才会把结果说出来。`output` 是**字符串**，不是对象。
 
-`qwen3.8-omni-flash-realtime` 还会额外发 `response.function_call_arguments.delta`，
-但 `arguments` 在 `.done` 里才是完整的。
+`qwen3.8-omni-flash-realtime` 和 `qwen-audio-3.1-realtime-plus` 还会额外发
+`response.function_call_arguments.delta`，但 `arguments` 在 `.done` 里才是完整的。
+
+语音输入路径同样成立：`qwen-audio-3.1-realtime-plus` 在
+`speech_stopped` → `committed` → `response.created` 之后直接发
+`response.function_call_arguments.done`，注入结果后正常播报。
 
 ## 打断
 

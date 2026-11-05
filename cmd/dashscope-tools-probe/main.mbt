@@ -52,6 +52,38 @@ fn field_string(raw : String, key : String) -> String? {
 }
 
 ///|
+/// Extract `response.status` and `response.status_details.reason` so a failed
+/// generation is visible instead of looking like an empty answer.
+fn response_status(raw : String) -> String {
+  match parse_object(raw) {
+    Some(map) =>
+      match map.get("response") {
+        Some(Json::Object(response)) => {
+          let status = match response.get("status") {
+            Some(Json::String(value)) => value
+            _ => "?"
+          }
+          let reason = match response.get("status_details") {
+            Some(Json::Object(details)) =>
+              match details.get("reason") {
+                Some(Json::String(value)) => value
+                _ => ""
+              }
+            _ => ""
+          }
+          if reason == "" {
+            " status=" + status
+          } else {
+            " status=" + status + " reason=" + reason
+          }
+        }
+        _ => ""
+      }
+    None => ""
+  }
+}
+
+///|
 fn error_summary(raw : String) -> String {
   match parse_object(raw) {
     Some(map) =>
@@ -134,7 +166,7 @@ async fn collect_turn(
           println("[" + label + "] error" + error_summary(raw))
           break
         } else if kind == "response.done" {
-          println("[" + label + "] response.done")
+          println("[" + label + "] response.done" + response_status(raw))
           break
         } else if kind == "response.audio.delta" ||
           kind == "response.output_audio.delta" {
@@ -209,15 +241,22 @@ async fn main {
   }
   println("[probe] connected")
   let _ = recv_text(ws, 10000)
-  ws.send_text(
-    provider
-    .session_update(
-      "You are a voice assistant. When the user asks about the current time or date, you must call the get_current_time tool instead of guessing.",
-      tools=time_tool(),
-    )
-    .stringify(),
+  let with_tools = match @env.get_env_var("MEDIAPILOT_PROBE_NO_TOOLS") {
+    Some(value) => value != "1"
+    None => true
+  }
+  let instructions = "You are a voice assistant. When the user asks about the current time or date, you must call the get_current_time tool instead of guessing."
+  let update = if with_tools {
+    provider.session_update(instructions, tools=time_tool())
+  } else {
+    provider.session_update(instructions)
+  }
+  ws.send_text(update.stringify())
+  println(
+    "[probe] sent session.update (tools=" +
+    (if with_tools { "on" } else { "off" }) +
+    ")",
   )
-  println("[probe] sent session.update with tools")
   let mut accepted = false
   for _ in 0..<20 {
     match recv_text(ws, 10000) {
@@ -243,13 +282,42 @@ async fn main {
   }
   println("[probe] RESULT: session.update with tools accepted")
 
-  ws.send_text(
-    @realtime.encode_text_message(
-      env_or("MEDIAPILOT_PROBE_QUESTION", "现在几点了？"),
-    ).stringify(),
-  )
-  ws.send_text(@realtime.encode_response_create().stringify())
-  println("[probe] asked for the current time")
+  let question = env_or("MEDIAPILOT_PROBE_QUESTION", "现在几点了？")
+  match @env.get_env_var("MEDIAPILOT_PROBE_PCM") {
+    Some(path) if path != "" => {
+      let pcm = @fs.read_binary(path) catch {
+        error => {
+          println("[probe] failed to read pcm: " + error.to_string())
+          ws.send_close()
+          ws.close()
+          return
+        }
+      }
+      println(
+        "[probe] streaming " + pcm.length().to_string() + " bytes of PCM16",
+      )
+      let chunk_bytes = 3200
+      let mut offset = 0
+      while offset < pcm.length() {
+        let end = if offset + chunk_bytes > pcm.length() {
+          pcm.length()
+        } else {
+          offset + chunk_bytes
+        }
+        ws.send_text(
+          @realtime.encode_audio_append(@base64.encode(pcm[offset:end])).stringify(),
+        )
+        offset = end
+        @async.sleep(100)
+      }
+      println("[probe] uplink done, waiting for server VAD")
+    }
+    _ => {
+      ws.send_text(@realtime.encode_text_message(question).stringify())
+      ws.send_text(@realtime.encode_response_create().stringify())
+      println("[probe] asked: " + question)
+    }
+  }
   match collect_turn(ws, "turn1") {
     None => println("[probe] RESULT: no function call was emitted")
     Some((call_id, name, arguments)) => {
