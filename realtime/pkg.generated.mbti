@@ -37,6 +37,8 @@ pub fn encode_text_message(String) -> Json
 
 pub fn function_tool(String, String, Json) -> Json
 
+pub fn merge_partial(String, String, String) -> String
+
 pub fn normalize_event(Json) -> Result[ProviderEvent?, ProviderError]
 
 pub fn normalize_incoming(String) -> Result[ProviderEvent?, ProviderError]
@@ -77,6 +79,8 @@ pub struct DashScopeSession {
   output_rate : Int32
   mut closed : Bool
   mut response_active : Bool
+  mut user_partial : String
+  mut assistant_partial : String
 }
 pub async fn DashScopeSession::close(Self) -> Unit
 pub fn DashScopeSession::input_sample_rate(Self) -> Int32

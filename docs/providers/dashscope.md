@@ -153,6 +153,20 @@ response.done
 `input_audio_buffer.speech_stopped`、`input_audio_buffer.committed`、
 `conversation.item.created`、`response.audio.done` 等只用于观测，不产生北向事件。
 
+### 两种转写编码
+
+用户和助手的转写在 wire 上不是同一种编码，这是最容易踩的坑：
+
+- **用户**：`conversation.item.input_audio_transcription.text` 的 `text` 是当前 item
+  的累计文本，`stash` 是尚未稳定的后缀，正确值是 `text + stash`。`delta` 事件只在
+  部分版本出现，作为兜底。只读 `delta` 会得到空字符串，客户端看起来就是“只有角色名，
+  没有文字”。
+- **助手**：`response.audio_transcript.delta` 是真正的增量，必须自己累加。
+
+`DashScopeSession` 把两者统一成**累计值**再发给客户端：用户侧直接替换缓冲，助手侧
+追加缓冲，`TranscriptFinal` 清空缓冲。北向 `transcript.partial.text` 因此总是“当前
+片段的累计文本”，客户端只做替换，不做追加。
+
 ## Function calling
 
 工具定义用 OpenAI 风格：

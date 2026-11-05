@@ -347,7 +347,7 @@ function connectSocket() {
     send({
       type: "session.hello",
       requestId: `c-${Date.now()}`,
-      protocolVersion: "0.4.0",
+      protocolVersion: "0.5.0",
       capabilities: [
         "realtime.audio-in",
         "realtime.audio-out",

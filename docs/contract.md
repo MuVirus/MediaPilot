@@ -4,7 +4,7 @@
 未列出的内容——内部模块路径、数据库结构、配置目录里的文件、日志格式——都不是契约，
 可以随时改变。
 
-状态：`v0.4.0`，P2 进行中。之后的协议变更必须升版本并更新此表。
+状态：`v0.5.0`，P2 进行中。之后的协议变更必须升版本并更新此表。
 
 范围：当前契约只覆盖实时音频。视频复用同一会话与事件模型，P4 才进入契约。
 
@@ -17,7 +17,7 @@
 
 ```json
 {
-  "protocolVersion": "0.4.0",
+  "protocolVersion": "0.5.0",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"]
 }
 ```
@@ -66,7 +66,7 @@
 {
   "type": "session.hello",
   "requestId": "c-1",
-  "protocolVersion": "0.4.0",
+  "protocolVersion": "0.5.0",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"]
 }
 ```
@@ -78,7 +78,7 @@
   "type": "session.ready",
   "requestId": "c-1",
   "sessionId": "s-1",
-  "protocolVersion": "0.4.0",
+  "protocolVersion": "0.5.0",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"]
 }
 ```
@@ -107,7 +107,7 @@
 | `type` | 字段 | 含义 |
 | --- | --- | --- |
 | `session.ready` | `requestId`, `sessionId`, `protocolVersion`, `capabilities` | 握手完成 |
-| `transcript.partial` | `role`, `text` | 增量转写 |
+| `transcript.partial` | `role`, `text` | 当前片段的累计文本（不是增量） |
 | `transcript.final` | `role`, `text` | 一段话的最终转写 |
 | `audio.delta` | `data`, `format`, `sampleRate`, `channels` | 一段可播放音频 |
 | `playback.clear` | `reason` | 立即停止播放并丢弃已缓冲音频 |
@@ -118,6 +118,11 @@
 
 所有服务端事件都带 `type`；除 `error` 外都带 `sessionId`。事件不保证跨会话有序，
 同一会话内按发送顺序处理。
+
+`transcript.partial` 的 `text` 是**当前片段的累计文本**，不是增量：客户端应直接
+替换整行，而不是追加。用户和助手两个方向规则相同，即使上游对两者使用了不同的编码
+（用户侧累计、助手侧增量），网关也会统一成累计值。`transcript.final` 是该片段结束
+时的完整文本；新片段开始时角色行会重新开始，客户端可以用 `playback.clear` 作为切分点。
 
 `playback.clear` 的 `reason` 是稳定 token，客户端不得依赖自由文本：
 

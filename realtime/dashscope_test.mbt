@@ -198,6 +198,48 @@ test "user transcription events use the user role" {
 }
 
 ///|
+test "user transcription streams text plus stash" {
+  let decoded = @realtime.normalize_incoming(
+    "{\"type\":\"conversation.item.input_audio_transcription.text\",\"text\":\"你看一下\",\"stash\":\"桌面\"}",
+  ).unwrap()
+  assert_eq(
+    decoded,
+    Some(
+      @realtime.ProviderEvent::TranscriptPartial(
+        role="user",
+        text="你看一下桌面",
+      ),
+    ),
+  )
+}
+
+///|
+test "user transcription falls back to delta" {
+  let decoded = @realtime.normalize_incoming(
+    "{\"type\":\"conversation.item.input_audio_transcription.delta\",\"delta\":\"你好\"}",
+  ).unwrap()
+  assert_eq(
+    decoded,
+    Some(@realtime.ProviderEvent::TranscriptPartial(role="user", text="你好")),
+  )
+}
+
+///|
+test "partial transcripts are cumulative for the client" {
+  // User input is cumulative on the wire, assistant output is incremental.
+  assert_eq(
+    @realtime.merge_partial("user", "你看", "你看一下"),
+    "你看一下",
+  )
+  assert_eq(
+    @realtime.merge_partial("user", "你看一下", "你看一下桌面"),
+    "你看一下桌面",
+  )
+  assert_eq(@realtime.merge_partial("assistant", "你", "好"), "你好")
+  assert_eq(@realtime.merge_partial("assistant", "你好", "。"), "你好。")
+}
+
+///|
 test "speech start maps to interrupt" {
   let decoded = @realtime.normalize_incoming(
     "{\"type\":\"input_audio_buffer.speech_started\"}",

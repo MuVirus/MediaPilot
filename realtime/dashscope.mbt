@@ -435,15 +435,18 @@ fn normalize_object(
         ),
       )
     "conversation.item.input_audio_transcription.delta"
-    | "conversation.item.input_audio_transcription.text" =>
-      Ok(
-        Some(
-          TranscriptPartial(
-            role="user",
-            text=optional_string(map, "delta") + optional_string(map, "text"),
-          ),
-        ),
-      )
+    | "conversation.item.input_audio_transcription.text" => {
+      // DashScope streams the *current* item transcript in `text` plus a
+      // pending suffix in `stash`; `delta` is the fallback for older shapes.
+      let complete = optional_string(map, "text") +
+        optional_string(map, "stash")
+      let value = if complete == "" {
+        optional_string(map, "delta")
+      } else {
+        complete
+      }
+      Ok(Some(TranscriptPartial(role="user", text=value)))
+    }
     "conversation.item.input_audio_transcription.completed" =>
       Ok(
         Some(

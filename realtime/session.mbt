@@ -14,6 +14,29 @@ pub struct DashScopeSession {
   /// `Conversation has no active response.`, which would surface to the client
   /// as a spurious provider error.
   mut response_active : Bool
+  /// Cumulative user transcript for the current speech item.
+  mut user_partial : String
+  /// Cumulative assistant transcript for the current response.
+  mut assistant_partial : String
+}
+
+///|
+/// Merge a provider transcript fragment into the running partial for a role.
+///
+/// The wire is inconsistent: DashScope sends user input as cumulative
+/// `text` + `stash`, while assistant output arrives as incremental deltas.
+/// Clients get one cumulative value per segment so they can replace the line
+/// instead of appending, which is the only behaviour that works for both.
+pub fn merge_partial(
+  role : String,
+  current : String,
+  incoming : String,
+) -> String {
+  if role == "user" {
+    incoming
+  } else {
+    current + incoming
+  }
 }
 
 ///|
@@ -94,11 +117,74 @@ async fn DashScopeSession::recv_event(
           match provider_event {
             ResponseStarted => {
               self.response_active = true
+              self.assistant_partial = ""
               None
             }
             TurnComplete => {
               self.response_active = false
               None
+            }
+            TranscriptPartial(role~, text~) => {
+              let current = if role == "user" {
+                self.user_partial
+              } else {
+                self.assistant_partial
+              }
+              let merged = merge_partial(role, current, text)
+              if role == "user" {
+                self.user_partial = merged
+              } else {
+                self.assistant_partial = merged
+              }
+              if merged == "" {
+                None
+              } else {
+                Some(
+                  @ports.RealtimeEvent::Forward(
+                    event=@protocol.ServerEvent::TranscriptPartial(
+                      session_id=self.session_id,
+                      role~,
+                      text=merged,
+                    ),
+                  ),
+                )
+              }
+            }
+            TranscriptFinal(role~, text~) => {
+              // The done frame normally repeats the whole segment; fall back to
+              // what was streamed when it does not.
+              let merged = if text != "" {
+                text
+              } else if role == "user" {
+                self.user_partial
+              } else {
+                self.assistant_partial
+              }
+              if role == "user" {
+                self.user_partial = ""
+              } else {
+                self.assistant_partial = ""
+              }
+              Some(
+                @ports.RealtimeEvent::Forward(
+                  event=@protocol.ServerEvent::TranscriptFinal(
+                    session_id=self.session_id,
+                    role~,
+                    text=merged,
+                  ),
+                ),
+              )
+            }
+            Interrupted => {
+              self.user_partial = ""
+              Some(
+                @ports.RealtimeEvent::Forward(
+                  event=@protocol.ServerEvent::PlaybackClear(
+                    session_id=self.session_id,
+                    reason="user_interruption",
+                  ),
+                ),
+              )
             }
             FunctionCall(call_id~, name~, arguments~) => {
               // The response that carried the call is over: `response.done` is
@@ -147,6 +233,8 @@ pub async fn DashScopeSession::open(
     output_rate: provider.output_sample_rate(),
     closed: false,
     response_active: false,
+    user_partial: "",
+    assistant_partial: "",
   }
   // The provider sends `session.created` before it accepts any command.
   let _ = session.recv_event(10000) catch {
