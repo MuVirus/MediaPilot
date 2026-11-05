@@ -8,8 +8,9 @@ struct FakeProvider {
   sent_audio : Array[String]
   sent_text : Array[String]
   mut interrupted : Bool
+  tool_results : Array[(String, String)]
   mut closed : Bool
-  events : @aqueue.Queue[@protocol.ServerEvent?]
+  events : @aqueue.Queue[@ports.RealtimeEvent?]
 }
 
 ///|
@@ -18,6 +19,7 @@ fn FakeProvider::new() -> FakeProvider {
     sent_audio: [],
     sent_text: [],
     interrupted: false,
+    tool_results: [],
     closed: false,
     events: @aqueue.Queue(kind=Blocking(16)),
   }
@@ -28,7 +30,19 @@ async fn FakeProvider::push(
   self : FakeProvider,
   event : @protocol.ServerEvent,
 ) -> Unit {
-  self.events.put(Some(event))
+  self.events.put(Some(@ports.RealtimeEvent::Forward(event~)))
+}
+
+///|
+async fn FakeProvider::push_tool_call(
+  self : FakeProvider,
+  call_id : String,
+  name : String,
+  arguments : String,
+) -> Unit {
+  self.events.put(
+    Some(@ports.RealtimeEvent::ToolCall(call_id~, name~, arguments~)),
+  )
 }
 
 ///|
@@ -62,6 +76,15 @@ pub impl @ports.RealtimeProvider for FakeProvider with fn next_event(self) {
 }
 
 ///|
+pub impl @ports.RealtimeProvider for FakeProvider with fn send_tool_result(
+  self,
+  call_id,
+  output,
+) {
+  self.tool_results.push((call_id, output))
+}
+
+///|
 pub impl @ports.RealtimeProvider for FakeProvider with fn input_sample_rate(
   _self,
 ) {
@@ -77,7 +100,71 @@ pub impl @ports.RealtimeProvider for FakeProvider with fn output_sample_rate(
 
 ///|
 fn fake_factory(provider : FakeProvider) -> @gateway.ProviderFactory {
-  async fn(_session_id) { Ok(provider as &@ports.RealtimeProvider) }
+  async fn(_session_id, _tools) { Ok(provider as &@ports.RealtimeProvider) }
+}
+
+///|
+/// A scripted backend that answers every task with a fixed string.
+struct FakeBackend {
+  submitted : Array[String]
+  events : @aqueue.Queue[@ports.BackendEvent?]
+}
+
+///|
+fn FakeBackend::new() -> FakeBackend {
+  { submitted: [], events: @aqueue.Queue(kind=Blocking(16)), }
+}
+
+///|
+pub impl @ports.BackendPort for FakeBackend with fn submit(
+  self,
+  _task_id,
+  instruction,
+) {
+  self.submitted.push(instruction)
+  let answer = "agent answer: " + instruction
+  self.events.put(Some(@ports.BackendEvent::TextDelta(text="agent ")))
+  self.events.put(Some(@ports.BackendEvent::TextDelta(text="answer")))
+  self.events.put(Some(@ports.BackendEvent::TextDone(text=answer)))
+  self.events.put(Some(@ports.BackendEvent::Completed))
+}
+
+///|
+pub impl @ports.BackendPort for FakeBackend with fn cancel(_self, _task_id) {
+
+}
+
+///|
+pub impl @ports.BackendPort for FakeBackend with fn respond_tool(
+  _self,
+  _call_id,
+  _output,
+) {
+
+}
+
+///|
+pub impl @ports.BackendPort for FakeBackend with fn respond_permission(
+  _self,
+  _request_id,
+  _allow,
+) {
+
+}
+
+///|
+pub impl @ports.BackendPort for FakeBackend with fn next_event(self) {
+  self.events.get()
+}
+
+///|
+pub impl @ports.BackendPort for FakeBackend with fn close(_self) {
+
+}
+
+///|
+fn fake_backend_factory(backend : FakeBackend) -> @gateway.BackendFactory {
+  async fn(_session_id) { Ok(backend as &@ports.BackendPort) }
 }
 
 ///|
@@ -127,11 +214,30 @@ async fn with_gateway(
   provider : FakeProvider,
   body : async (@websocket.Conn) -> Unit,
 ) -> Unit {
+  with_gateway_backend(provider, None, body)
+}
+
+///|
+/// Like `with_gateway`, but with an optional agent backend so `delegate_task`
+/// is registered.
+async fn with_gateway_backend(
+  provider : FakeProvider,
+  backend : FakeBackend?,
+  body : async (@websocket.Conn) -> Unit,
+) -> Unit {
   let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
   let port = server.addr.port()
   @async.with_task_group() <| group => {
     group.spawn_bg(no_wait=true) <| () => {
-      @gateway.serve(server, fake_factory(provider))
+      match backend {
+        Some(backend) =>
+          @gateway.serve(
+            server,
+            fake_factory(provider),
+            open_backend=fake_backend_factory(backend),
+          )
+        None => @gateway.serve(server, fake_factory(provider))
+      }
     }
     @async.sleep(50)
     let ws = @websocket.connect("ws://127.0.0.1:\{port}/api/realtime")
@@ -382,5 +488,88 @@ async test "client close is not reported as a provider error" {
         fail("client close must not produce an error event")
       _ => ()
     }
+  })
+}
+
+///|
+test "delegate_task tool is well-formed" {
+  let tool = @gateway.delegate_task_tool()
+  let parsed = @json.parse(tool.stringify())
+  let function = match parsed {
+    Json::Object(root) =>
+      match root.get("function") {
+        Some(Json::Object(function)) => function
+        _ => panic()
+      }
+    _ => panic()
+  }
+  assert_eq(function.get("name"), Some(Json::string("delegate_task")))
+  let parameters = match function.get("parameters") {
+    Some(Json::Object(parameters)) => parameters
+    _ => panic()
+  }
+  assert_eq(
+    parameters.get("required"),
+    Some(Json::array([Json::string("instruction")])),
+  )
+}
+
+///|
+async test "delegate_task runs the backend and answers the tool call" {
+  let provider = FakeProvider::new()
+  let backend = FakeBackend::new()
+  with_gateway_backend(provider, Some(backend), async fn(ws) {
+    hello(ws)
+    let _ = read_event(ws)
+    provider.push_tool_call(
+      "call-1", "delegate_task", "{\"instruction\":\"查一下明天杭州的天气\"}",
+    )
+    // Expect progress plus the final answer.
+    let mut saw_running = false
+    let mut completed_text = ""
+    for _ in 0..<20 {
+      match read_event(ws) {
+        Some(@protocol.ServerEvent::TaskUpdated(task_id~, status~, text~, ..)) => {
+          assert_eq(task_id, "t-1")
+          if status == "running" {
+            saw_running = true
+          }
+          if status == "completed" {
+            completed_text = text
+            break
+          }
+          if status == "failed" {
+            fail("delegated task failed")
+          }
+        }
+        Some(_) => ()
+        None => break
+      }
+    }
+    assert_true(saw_running)
+    assert_eq(completed_text, "agent answer: 查一下明天杭州的天气")
+    // The gateway must answer the model with the same text.
+    @async.sleep(120)
+    assert_eq(backend.submitted, ["查一下明天杭州的天气"])
+    assert_eq(provider.tool_results.length(), 1)
+    let (call_id, output) = provider.tool_results[0]
+    assert_eq(call_id, "call-1")
+    assert_true(output.contains("agent answer"))
+  })
+}
+
+///|
+async test "unknown tools are rejected without calling the backend" {
+  let provider = FakeProvider::new()
+  let backend = FakeBackend::new()
+  with_gateway_backend(provider, Some(backend), async fn(ws) {
+    hello(ws)
+    let _ = read_event(ws)
+    provider.push_tool_call("call-1", "delete_everything", "{}")
+    @async.sleep(120)
+    assert_eq(backend.submitted, [])
+    assert_eq(provider.tool_results.length(), 1)
+    let (_, output) = provider.tool_results[0]
+    assert_true(output.contains("unknown tool"))
   })
 }

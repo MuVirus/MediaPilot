@@ -7,7 +7,7 @@ fn env_or(key : String, fallback : String) -> String {
 }
 
 ///|
-let default_instructions : String = "You are a concise voice assistant. Answer in one short sentence."
+let default_instructions : String = "You are a concise voice assistant. Answer in one short sentence. When the user asks you to actually do something, call delegate_task instead of pretending to do it."
 
 ///|
 /// Gateway entry point.
@@ -32,24 +32,51 @@ async fn main {
     ),
     voice: env_or("MEDIAPILOT_REALTIME_VOICE", "longanqian_v3.1"),
   }
+  let llm_config = @backend.LlmConfig::{
+    base_url: env_or("MEDIAPILOT_LLM_BASE_URL", @backend.default_llm_base_url),
+    api_key: config.api_key,
+    model: env_or("MEDIAPILOT_LLM_MODEL", "qwen-plus"),
+    system_prompt: env_or(
+      "MEDIAPILOT_LLM_SYSTEM", "You are a concise voice assistant. Answer in one short sentence.",
+    ),
+  }
   let bind = env_or("MEDIAPILOT_BIND", "127.0.0.1:8787")
   let instructions = env_or("MEDIAPILOT_INSTRUCTIONS", default_instructions)
   let static_root = env_or("MEDIAPILOT_WEB_ROOT", "web")
   println("[gateway] model=" + config.model)
   println("[gateway] voice=" + config.voice)
+  println("[gateway] llm=" + llm_config.model)
   println("[gateway] web=" + static_root)
-  let open_provider : @gateway.ProviderFactory = async fn(session_id) {
-    let session = @realtime.DashScopeSession::open(
-      config, session_id, instructions,
-    ) catch {
-      error =>
-        return Err(@ports.ProviderFailure::{
-          code: error.to_error_code(),
-          message: error.to_string(),
-          retryable: error.is_retryable(),
-        })
+  let open_provider : @gateway.ProviderFactory = async fn(session_id, tools) {
+    let session = match tools {
+      Some(tool_list) =>
+        @realtime.DashScopeSession::open(
+          config,
+          session_id,
+          instructions,
+          tools=tool_list,
+        ) catch {
+          error =>
+            return Err(@ports.ProviderFailure::{
+              code: error.to_error_code(),
+              message: error.to_string(),
+              retryable: error.is_retryable(),
+            })
+        }
+      None =>
+        @realtime.DashScopeSession::open(config, session_id, instructions) catch {
+          error =>
+            return Err(@ports.ProviderFailure::{
+              code: error.to_error_code(),
+              message: error.to_string(),
+              retryable: error.is_retryable(),
+            })
+        }
     }
     Ok(session as &@ports.RealtimeProvider)
   }
-  @gateway.run_gateway(bind, open_provider, static_root~)
+  let open_backend : @gateway.BackendFactory = async fn(_session_id) {
+    Ok(@backend.LlmBackend::new(llm_config) as &@ports.BackendPort)
+  }
+  @gateway.run_gateway(bind, open_provider, open_backend~, static_root~)
 }

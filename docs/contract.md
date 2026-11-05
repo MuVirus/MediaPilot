@@ -4,7 +4,7 @@
 未列出的内容——内部模块路径、数据库结构、配置目录里的文件、日志格式——都不是契约，
 可以随时改变。
 
-状态：`v0.2.0`，P1 完成。之后的协议变更必须升版本并更新此表。
+状态：`v0.3.0`，P2 进行中。之后的协议变更必须升版本并更新此表。
 
 范围：当前契约只覆盖实时音频。视频复用同一会话与事件模型，P4 才进入契约。
 
@@ -17,7 +17,7 @@
 
 ```json
 {
-  "protocolVersion": "0.2.0",
+  "protocolVersion": "0.3.0",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"]
 }
 ```
@@ -34,6 +34,7 @@
 | `realtime.text-in` | 客户端可发送文本输入 | `gateway/integration_test.mbt` |
 | `realtime.interrupt` | 客户端可打断当前回复并清空播放 | `gateway/integration_test.mbt` |
 | `realtime.playback-clear` | 服务端可要求客户端停止播放已缓冲音频 | `protocol/codec_test.mbt` |
+| `realtime.task` | 服务端可推送 `task.updated` 背景任务进度 | `gateway/integration_test.mbt` |
 
 事件的 JSON 形状由 `protocol/codec_test.mbt` 锁定；`GET /api/health` 的响应形状由
 `gateway/gateway_test.mbt` 锁定。
@@ -64,7 +65,7 @@
 {
   "type": "session.hello",
   "requestId": "c-1",
-  "protocolVersion": "0.2.0",
+  "protocolVersion": "0.3.0",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"]
 }
 ```
@@ -76,7 +77,7 @@
   "type": "session.ready",
   "requestId": "c-1",
   "sessionId": "s-1",
-  "protocolVersion": "0.2.0",
+  "protocolVersion": "0.3.0",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"]
 }
 ```
@@ -108,7 +109,7 @@
 | `transcript.final` | `role`, `text` | 一段话的最终转写 |
 | `audio.delta` | `data`, `format`, `sampleRate`, `channels` | 一段可播放音频 |
 | `playback.clear` | `reason` | 立即停止播放并丢弃已缓冲音频 |
-| `task.updated` | `task` | 任务状态或产物更新（P2） |
+| `task.updated` | `taskId`, `status`, `text` | 背景任务进度 |
 | `error` | `code`, `message`, `retryable` | 可恢复或不可恢复错误 |
 
 所有服务端事件都带 `type`；除 `error` 外都带 `sessionId`。事件不保证跨会话有序，
@@ -122,6 +123,18 @@
 | `client_interrupt` | 服务端已处理 `session.interrupt`，这是打断确认 |
 
 收到 `playback.clear` 后，客户端必须丢弃本地待播放缓冲，不能只暂停。
+
+`task.updated` 的 `status` 是稳定 token：
+
+| `status` | 含义 |
+| --- | --- |
+| `running` | 任务进行中，`text` 是当前已产生的文本，可能为空 |
+| `completed` | 任务完成，`text` 是完整结果 |
+| `failed` | 任务失败，`text` 是错误信息 |
+
+同一个 `taskId` 会先收到若干 `running`，再收到一个终态。客户端应在 `running` 时
+显示进度，但不能把增量 `text` 当作最终答案。`task.updated` 只是进度展示；
+最终答案由同一轮次的 `audio.delta` / `transcript.final` 给出。
 
 ## 断线与重连
 

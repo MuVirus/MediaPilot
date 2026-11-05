@@ -1,6 +1,7 @@
 import {
   "moonbitlang/core/async",
   "moonbitlang/core/env",
+  "MuVirus/MediaPilot/backend",
   "MuVirus/MediaPilot/gateway",
   "MuVirus/MediaPilot/ports",
   "MuVirus/MediaPilot/realtime",

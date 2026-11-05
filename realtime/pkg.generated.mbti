@@ -81,11 +81,12 @@ pub struct DashScopeSession {
 pub async fn DashScopeSession::close(Self) -> Unit
 pub fn DashScopeSession::input_sample_rate(Self) -> Int32
 pub async fn DashScopeSession::interrupt(Self) -> Unit raise ProviderError
-pub async fn DashScopeSession::next_event(Self) -> @protocol.ServerEvent?
-pub async fn DashScopeSession::open(ProviderConfig, String, String) -> Self raise ProviderError
+pub async fn DashScopeSession::next_event(Self) -> @ports.RealtimeEvent?
+pub async fn DashScopeSession::open(ProviderConfig, String, String, tools? : Json) -> Self raise ProviderError
 pub fn DashScopeSession::output_sample_rate(Self) -> Int32
 pub async fn DashScopeSession::send_audio(Self, String) -> Unit raise ProviderError
 pub async fn DashScopeSession::send_text(Self, String) -> Unit raise ProviderError
+pub async fn DashScopeSession::send_tool_result(Self, String, String) -> Unit raise ProviderError
 pub impl @ports.RealtimeProvider for DashScopeSession
 
 pub(all) struct ModelProfile {

@@ -1,9 +1,19 @@
 ///|
 /// Opens one upstream session for a client session.
 ///
-/// `cmd/` supplies this so `gateway/` never imports a provider package.
-pub type ProviderFactory = async (String) -> Result[
+/// The second argument is the tool list the gateway wants registered, or `None`
+/// when no backend is configured. `cmd/` supplies this so `gateway/` never
+/// imports a provider package.
+pub type ProviderFactory = async (String, Json?) -> Result[
   &@ports.RealtimeProvider,
+  @ports.ProviderFailure,
+]
+
+///|
+/// Opens one agent backend for a client session. `None` means the deployment
+/// has no backend and `delegate_task` is not offered to the model.
+pub type BackendFactory = async (String) -> Result[
+  &@ports.BackendPort,
   @ports.ProviderFailure,
 ]
 
@@ -20,14 +30,18 @@ pub let outbound_capacity : Int32 = 256
 pub async fn run_gateway(
   bind : String,
   open_provider : ProviderFactory,
+  open_backend? : BackendFactory,
   static_root? : String,
 ) -> Unit {
   let addr = @socket.Addr::parse(bind)
   let server = @http.Server(addr)
   println("[gateway] listening on " + bind)
-  match static_root {
-    Some(root) => serve(server, open_provider, static_root=root)
-    None => serve(server, open_provider)
+  match (open_backend, static_root) {
+    (Some(backend), Some(root)) =>
+      serve(server, open_provider, open_backend=backend, static_root=root)
+    (Some(backend), None) => serve(server, open_provider, open_backend=backend)
+    (None, Some(root)) => serve(server, open_provider, static_root=root)
+    (None, None) => serve(server, open_provider)
   }
 }
 
@@ -37,12 +51,18 @@ pub async fn run_gateway(
 pub async fn serve(
   server : @http.Server,
   open_provider : ProviderFactory,
+  open_backend? : BackendFactory,
   static_root? : String,
 ) -> Unit {
   server.run_forever((request, conn) => {
     match (request.meth, request.path) {
       (Get, "/api/health") => handle_health(conn)
-      (Get, "/api/realtime") => handle_realtime(request, conn, open_provider)
+      (Get, "/api/realtime") =>
+        match open_backend {
+          Some(backend) =>
+            handle_realtime(request, conn, open_provider, open_backend=backend)
+          None => handle_realtime(request, conn, open_provider)
+        }
       (Get, path) =>
         match static_root {
           Some(root) => handle_static(conn, root, path)
@@ -153,6 +173,7 @@ async fn handle_realtime(
   request : @http.RequestHeader,
   conn : @http.ServerConnection,
   open_provider : ProviderFactory,
+  open_backend? : BackendFactory,
 ) -> Unit {
   let ws = @websocket.from_http_server(request, conn) catch {
     _ => {
@@ -200,9 +221,31 @@ async fn handle_realtime(
     return
   }
   let session_id = next_session_id()
-  let provider = match open_provider(session_id) {
+  let backend = match open_backend {
+    Some(factory) =>
+      match factory(session_id) {
+        Ok(backend) => Some(backend)
+        Err(failure) => {
+          println(
+            "[gateway] backend unavailable, continuing without tools: " +
+            failure.message,
+          )
+          None
+        }
+      }
+    None => None
+  }
+  let tools = match backend {
+    Some(_) => Some(Json::array([delegate_task_tool()]))
+    None => None
+  }
+  let provider = match open_provider(session_id, tools) {
     Ok(provider) => provider
     Err(failure) => {
+      match backend {
+        Some(backend) => backend.close() catch { _ => () }
+        None => ()
+      }
       send_error(ws, failure.code, failure.message, failure.retryable)
       return
     }
@@ -217,8 +260,42 @@ async fn handle_realtime(
       capabilities~,
     ),
   )
-  bridge(ws, provider, session_id)
+  bridge(ws, provider, session_id, backend)
   provider.close()
+  match backend {
+    Some(backend) => backend.close() catch { _ => () }
+    None => ()
+  }
+}
+
+///|
+/// The single tool the gateway offers the realtime coordinator.
+///
+/// The model is told to hand real work to the backend instead of pretending to
+/// do it. Small talk stays in the realtime model so latency stays low.
+pub fn delegate_task_tool() -> Json {
+  Json::object({
+    "type": Json::string("function"),
+    "function": Json::object({
+      "name": Json::string("delegate_task"),
+      "description": Json::string(
+        "Hand a multi-step task to the background agent. Use this when the user asks you to actually do something that needs tools, files, code, or current information. Do not use it for small talk or questions you can answer yourself.",
+      ),
+      "parameters": Json::object({
+        "type": Json::string("object"),
+        "properties": Json::object({
+          "instruction": Json::object({
+            "type": Json::string("string"),
+            "description": Json::string(
+              "A self-contained instruction for the agent. Include all context it needs, because it cannot hear the conversation.",
+            ),
+          }),
+        }),
+        "required": Json::array([Json::string("instruction")]),
+        "additionalProperties": Json::boolean(false),
+      }),
+    }),
+  })
 }
 
 ///|
@@ -269,6 +346,7 @@ async fn bridge(
   ws : @websocket.Conn,
   provider : &@ports.RealtimeProvider,
   session_id : String,
+  backend : &@ports.BackendPort?,
 ) -> Unit {
   let outbound : @aqueue.Queue[@protocol.ServerEvent?] = @aqueue.Queue(
     kind=Blocking(outbound_capacity),
@@ -283,7 +361,7 @@ async fn bridge(
       done.put(())
     }
     group.spawn_bg(no_wait=true) <| () => {
-      provider_pump(provider, outbound, client_closing)
+      provider_pump(provider, outbound, client_closing, backend, session_id)
     }
     group.spawn_bg(no_wait=true) <| () => {
       writer_pump(ws, outbound)
@@ -427,10 +505,28 @@ async fn provider_pump(
   provider : &@ports.RealtimeProvider,
   outbound : @aqueue.Queue[@protocol.ServerEvent?],
   client_closing : Ref[Bool],
+  backend : &@ports.BackendPort?,
+  session_id : String,
 ) -> Unit {
+  let mut task_seq : Int32 = 0
   for ;; {
     match provider.next_event() {
-      Some(event) => outbound.put(Some(event))
+      Some(@ports.RealtimeEvent::Forward(event~)) => outbound.put(Some(event))
+      Some(@ports.RealtimeEvent::ToolCall(call_id~, name~, arguments~)) => {
+        let output = match backend {
+          Some(backend) => {
+            task_seq = task_seq + 1
+            handle_tool_call(
+              backend, outbound, session_id, task_seq, name, arguments,
+            )
+          }
+          None =>
+            tool_error(
+              "no backend is configured, so the task cannot be delegated",
+            )
+        }
+        provider.send_tool_result(call_id, output)
+      }
       None => {
         if !client_closing.val {
           outbound.put(
@@ -447,6 +543,123 @@ async fn provider_pump(
         return
       }
     }
+  }
+}
+
+///|
+/// Build a JSON tool result for the model.
+fn tool_error(message : String) -> String {
+  "{\"status\":\"error\",\"message\":" + Json::string(message).stringify() + "}"
+}
+
+///|
+/// Read the `instruction` field out of the model's tool arguments.
+fn tool_instruction(arguments : String) -> String? {
+  let parsed = @json.parse(arguments) catch { _ => return None }
+  match parsed {
+    Json::Object(map) =>
+      match map.get("instruction") {
+        Some(Json::String(text)) =>
+          if text.trim_space().is_empty() {
+            None
+          } else {
+            Some(text)
+          }
+        _ => None
+      }
+    _ => None
+  }
+}
+
+///|
+/// Run one delegated task and return the JSON result for the model.
+///
+/// `submit` blocks until the task finishes, so it runs in a child task while
+/// this function drains the backend queue. That also gives the client live
+/// `task.updated` progress instead of one event at the end.
+async fn handle_tool_call(
+  backend : &@ports.BackendPort,
+  outbound : @aqueue.Queue[@protocol.ServerEvent?],
+  session_id : String,
+  task_seq : Int32,
+  name : String,
+  arguments : String,
+) -> String {
+  if name != "delegate_task" {
+    return tool_error("unknown tool: " + name)
+  }
+  let instruction = match tool_instruction(arguments) {
+    Some(text) => text
+    None => return tool_error("delegate_task requires a non-empty instruction")
+  }
+  let task_id = "t-" + task_seq.to_string()
+  outbound.put(
+    Some(
+      @protocol.ServerEvent::TaskUpdated(
+        session_id~,
+        task_id~,
+        status="running",
+        text="",
+      ),
+    ),
+  )
+  let mut text = ""
+  let mut failure = ""
+  @async.with_task_group() <| group => {
+    group.spawn_bg(no_wait=true) <| () => {
+      backend.submit(task_id, instruction)
+    }
+    for ;; {
+      match backend.next_event() {
+        None => break
+        Some(@ports.BackendEvent::TextDelta(text=delta)) => {
+          text = text + delta
+          outbound.put(
+            Some(
+              @protocol.ServerEvent::TaskUpdated(
+                session_id~,
+                task_id~,
+                status="running",
+                text~,
+              ),
+            ),
+          )
+        }
+        Some(@ports.BackendEvent::TextDone(text=final_text)) =>
+          text = final_text
+        Some(@ports.BackendEvent::Failed(message~, ..)) => {
+          failure = message
+          break
+        }
+        Some(@ports.BackendEvent::Completed) => break
+        Some(_) => ()
+      }
+    }
+  }
+  if failure != "" {
+    outbound.put(
+      Some(
+        @protocol.ServerEvent::TaskUpdated(
+          session_id~,
+          task_id~,
+          status="failed",
+          text=failure,
+        ),
+      ),
+    )
+    tool_error(failure)
+  } else {
+    outbound.put(
+      Some(
+        @protocol.ServerEvent::TaskUpdated(
+          session_id~,
+          task_id~,
+          status="completed",
+          text~,
+        ),
+      ),
+    )
+    "{\"status\":\"ok\",\"answer\":" + Json::string(text).stringify() + "}"
   }
 }
 

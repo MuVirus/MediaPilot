@@ -18,6 +18,8 @@ pub let capability_playback_clear : String
 
 pub let capability_session : String
 
+pub let capability_task : String
+
 pub let capability_text_in : String
 
 pub fn decode_client_event(String) -> Result[ClientEvent?, ProtocolError]
@@ -74,6 +76,7 @@ pub(all) enum ServerEvent {
   TranscriptFinal(session_id~ : String, role~ : String, text~ : String)
   AudioDelta(session_id~ : String, data~ : String, format~ : String, sample_rate~ : Int32, channels~ : Int32)
   PlaybackClear(session_id~ : String, reason~ : String)
+  TaskUpdated(session_id~ : String, task_id~ : String, status~ : String, text~ : String)
   Error(code~ : ErrorCode, message~ : String, retryable~ : Bool)
 } derive(Eq, @debug.Debug)
 

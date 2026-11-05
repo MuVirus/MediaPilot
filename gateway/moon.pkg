@@ -6,6 +6,7 @@ import {
   "moonbitlang/core/async/socket",
   "moonbitlang/core/async/websocket",
   "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
   "MuVirus/MediaPilot/ports",
   "MuVirus/MediaPilot/protocol",
 }

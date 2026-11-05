@@ -7,6 +7,8 @@ import {
 }
 
 // Values
+pub fn delegate_task_tool() -> Json
+
 pub fn health_json() -> String
 
 pub fn health_payload() -> Json
@@ -15,15 +17,17 @@ pub fn negotiate_capabilities(Array[String]) -> Array[String]
 
 pub let outbound_capacity : Int32
 
-pub async fn run_gateway(String, async (String) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], static_root? : String) -> Unit
+pub async fn run_gateway(String, async (String, Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String) -> Unit
 
-pub async fn serve(@http.Server, async (String) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], static_root? : String) -> Unit
+pub async fn serve(@http.Server, async (String, Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String) -> Unit
 
 // Errors
 
 // Types and methods
 
 // Type aliases
-pub type ProviderFactory = async (String) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure]
+pub type BackendFactory = async (String) -> Result[&@ports.BackendPort, @ports.ProviderFailure]
+
+pub type ProviderFactory = async (String, Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure]
 
 // Traits

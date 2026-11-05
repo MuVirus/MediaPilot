@@ -77,6 +77,20 @@ test "server audio delta round trip" {
 }
 
 ///|
+test "task updated round trip" {
+  let event = @protocol.ServerEvent::TaskUpdated(
+    session_id="s-1",
+    task_id="t-1",
+    status="running",
+    text="partial",
+  )
+  let decoded = @protocol.decode_server_event(
+    @protocol.encode_server_event_string(event),
+  ).unwrap()
+  assert_eq(decoded, Some(event))
+}
+
+///|
 test "playback clear round trip" {
   let event = @protocol.ServerEvent::PlaybackClear(
     session_id="s-1",

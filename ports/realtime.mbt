@@ -10,14 +10,22 @@ pub(all) struct ProviderFailure {
 } derive(Eq, Debug)
 
 ///|
+/// One item read from the upstream session.
+///
+/// Most events are forwarded to the client unchanged. A `ToolCall` is not a
+/// northbound event: the gateway decides whether to delegate it to a backend
+/// and answers with `send_tool_result`.
+pub(all) enum RealtimeEvent {
+  Forward(event~ : @protocol.ServerEvent)
+  ToolCall(call_id~ : String, name~ : String, arguments~ : String)
+} derive(Eq, Debug)
+
+///|
 /// A live upstream realtime session.
 ///
 /// `gateway/` owns client connections and session lifecycle; it talks to the
 /// upstream only through this trait. `realtime/` implements it. Neither package
 /// imports the other, so provider wire details cannot leak into the gateway.
-///
-/// Events are already normalized to `@protocol.ServerEvent`, including the
-/// session ID, so the gateway can forward them without translation.
 pub(open) trait RealtimeProvider {
   /// Append base64 PCM16 audio to the current input turn.
   async fn send_audio(Self, data : String) -> Unit
@@ -34,8 +42,11 @@ pub(open) trait RealtimeProvider {
   /// Block until the next normalized event.
   ///
   /// `None` means the upstream closed and no further events will arrive.
-  /// Upstream failures arrive as `ServerEvent::Error`, not as `None`.
-  async fn next_event(Self) -> @protocol.ServerEvent?
+  /// Upstream failures arrive as `Forward(ServerEvent::Error)`, not as `None`.
+  async fn next_event(Self) -> RealtimeEvent?
+
+  /// Answer a `ToolCall` so the model can continue the turn.
+  async fn send_tool_result(Self, call_id : String, output : String) -> Unit
 
   /// Sample rate the upstream expects for client audio.
   fn input_sample_rate(Self) -> Int32

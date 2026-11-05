@@ -26,6 +26,11 @@ pub(all) struct ProviderFailure {
   retryable : Bool
 } derive(Eq, @debug.Debug)
 
+pub(all) enum RealtimeEvent {
+  Forward(event~ : @protocol.ServerEvent)
+  ToolCall(call_id~ : String, name~ : String, arguments~ : String)
+} derive(Eq, @debug.Debug)
+
 // Type aliases
 
 // Traits
@@ -43,7 +48,8 @@ pub(open) trait RealtimeProvider {
   async fn send_text(Self, String) -> Unit
   async fn interrupt(Self) -> Unit
   async fn close(Self) -> Unit
-  async fn next_event(Self) -> @protocol.ServerEvent?
+  async fn next_event(Self) -> RealtimeEvent?
+  async fn send_tool_result(Self, String, String) -> Unit
   fn input_sample_rate(Self) -> Int32
   fn output_sample_rate(Self) -> Int32
 }

@@ -38,6 +38,7 @@ let reconnectAttempt = 0;
 let reconnectTimer = null;
 let sessionId = "";
 let receivedAudioSeconds = 0;
+let taskLine = "";
 let assistantLine = null;
 let userLine = null;
 
@@ -53,10 +54,12 @@ function setStatus(text) {
 function refreshStatus() {
   if (!running) return;
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  setStatus(
-    `已连接 · 已接收 ${receivedAudioSeconds.toFixed(1)}s 音频` +
-      (sessionId ? ` · ${sessionId}` : ""),
-  );
+  const parts = [
+    `已接收 ${receivedAudioSeconds.toFixed(1)}s 音频`,
+  ];
+  if (sessionId) parts.push(sessionId);
+  if (taskLine) parts.push(taskLine);
+  setStatus(`已连接 · ${parts.join(" · ")}`);
 }
 
 function setRunning(value) {
@@ -155,6 +158,7 @@ function handleServerEvent(event) {
       sessionId = event.sessionId;
       reconnectAttempt = 0;
       receivedAudioSeconds = 0;
+      taskLine = "";
       log(`ready session=${event.sessionId}`);
       refreshStatus();
       break;
@@ -176,6 +180,18 @@ function handleServerEvent(event) {
       stopPlayback();
       // A new user turn starts here, so the next transcript lines are new.
       resetLines();
+      break;
+    case "task.updated":
+      if (event.status === "running") {
+        taskLine = `代理处理中 ${event.text.length} 字`;
+      } else if (event.status === "completed") {
+        taskLine = `代理完成 ${event.text.length} 字`;
+        log(`task ${event.taskId} completed`);
+      } else {
+        taskLine = `代理失败`;
+        log(`task ${event.taskId} failed: ${event.text}`);
+      }
+      refreshStatus();
       break;
     case "error":
       log(`error ${event.code}: ${event.message}`);
@@ -242,6 +258,7 @@ function connectSocket() {
         "realtime.text-in",
         "realtime.interrupt",
         "realtime.playback-clear",
+        "realtime.task",
       ],
     });
     log("socket open, hello sent");

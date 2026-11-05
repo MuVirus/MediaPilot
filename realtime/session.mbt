@@ -74,7 +74,7 @@ async fn send_frame(
 async fn DashScopeSession::recv_event(
   self : DashScopeSession,
   timeout_ms : Int32,
-) -> @protocol.ServerEvent? raise ProviderError {
+) -> @ports.RealtimeEvent? raise ProviderError {
   let raw = try
     @async.with_timeout_opt(timeout_ms) <| () => {
       self.ws.recv().text.read_all()
@@ -90,14 +90,25 @@ async fn DashScopeSession::recv_event(
         Err(error) => raise error
       }
       match event {
-        Some(provider_event) => {
+        Some(provider_event) =>
           match provider_event {
-            ResponseStarted => self.response_active = true
-            TurnComplete => self.response_active = false
-            _ => ()
+            ResponseStarted => {
+              self.response_active = true
+              None
+            }
+            TurnComplete => {
+              self.response_active = false
+              None
+            }
+            FunctionCall(call_id~, name~, arguments~) =>
+              Some(@ports.RealtimeEvent::ToolCall(call_id~, name~, arguments~))
+            _ =>
+              match to_server_event(self.session_id, provider_event) {
+                Some(server_event) =>
+                  Some(@ports.RealtimeEvent::Forward(event=server_event))
+                None => None
+              }
           }
-          to_server_event(self.session_id, provider_event)
-        }
         None => None
       }
     }
@@ -113,6 +124,7 @@ pub async fn DashScopeSession::open(
   config : ProviderConfig,
   session_id : String,
   instructions : String,
+  tools? : @json.Json,
 ) -> DashScopeSession raise ProviderError {
   let provider = DashScopeProvider::new(config)
   let headers : Map[@http.CaseInsensitiveString, String] = Map([
@@ -136,7 +148,11 @@ pub async fn DashScopeSession::open(
       raise error
     }
   }
-  send_frame(ws, provider.session_update(instructions).stringify()) catch {
+  let session_update = match tools {
+    Some(tool_list) => provider.session_update(instructions, tools=tool_list)
+    None => provider.session_update(instructions)
+  }
+  send_frame(ws, session_update.stringify()) catch {
     error => {
       ws.close()
       raise error
@@ -152,7 +168,11 @@ pub async fn DashScopeSession::open(
     }
   }
   match first {
-    Some(@protocol.ServerEvent::Error(code~, message~, ..)) => {
+    Some(
+      @ports.RealtimeEvent::Forward(
+        event=@protocol.ServerEvent::Error(code~, message~, ..)
+      )
+    ) => {
       ws.close()
       raise SessionRejected(code.to_code() + ": " + message)
     }
@@ -205,27 +225,40 @@ pub async fn DashScopeSession::close(self : DashScopeSession) -> Unit {
 }
 
 ///|
-/// Block until the next northbound event. `None` means the upstream closed.
+/// Block until the next upstream item. `None` means the upstream closed.
 pub async fn DashScopeSession::next_event(
   self : DashScopeSession,
-) -> @protocol.ServerEvent? {
+) -> @ports.RealtimeEvent? {
   for _ in 0..<1000 {
     let event = self.recv_event(60000) catch {
       error =>
         return Some(
-          @protocol.ServerEvent::Error(
-            code=@protocol.ErrorCode::ProviderUnavailable,
-            message=error.to_string(),
-            retryable=true,
+          @ports.RealtimeEvent::Forward(
+            event=@protocol.ServerEvent::Error(
+              code=@protocol.ErrorCode::ProviderUnavailable,
+              message=error.to_string(),
+              retryable=true,
+            ),
           ),
         )
     }
     match event {
-      Some(server_event) => return Some(server_event)
+      Some(item) => return Some(item)
       None => ()
     }
   }
   None
+}
+
+///|
+/// Answer a tool call and let the model continue the turn.
+pub async fn DashScopeSession::send_tool_result(
+  self : DashScopeSession,
+  call_id : String,
+  output : String,
+) -> Unit raise ProviderError {
+  send_frame(self.ws, encode_function_output(call_id, output).stringify())
+  send_frame(self.ws, encode_response_create().stringify())
 }
 
 ///|
@@ -273,6 +306,17 @@ pub impl @ports.RealtimeProvider for DashScopeSession with fn close(self) {
 ///|
 pub impl @ports.RealtimeProvider for DashScopeSession with fn next_event(self) {
   self.next_event()
+}
+
+///|
+pub impl @ports.RealtimeProvider for DashScopeSession with fn send_tool_result(
+  self,
+  call_id,
+  output,
+) {
+  self.send_tool_result(call_id, output) catch {
+    _ => ()
+  }
 }
 
 ///|

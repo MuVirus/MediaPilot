@@ -48,8 +48,8 @@ P0 已验证的事实：
 - [x] `BackendPort`：`submit` / `cancel` / `respond_tool` / `respond_permission` / `next_event` / `close`。
 - [x] LLM backend：OpenAI 兼容 `/chat/completions`，SSE 流式输出，错误映射。
 - [ ] ACP backend：JSON-RPC over stdio，先接 `opencode acp`。
-- [ ] realtime 侧注册 `delegate_task` 工具，把工具调用转给 `BackendPort`。
-- [ ] 工具结果回注 realtime 会话并播报。
+- [x] realtime 侧注册 `delegate_task` 工具，把工具调用转给 `BackendPort`。
+- [x] 工具结果回注 realtime 会话并播报。
 - [ ] 权限请求进入北向事件（`task.updated` / 授权事件）。
 - [ ] 会话级授权范围（once / task / session）与超时。
 - [ ] 审计日志：谁、在哪个会话、批准了什么。

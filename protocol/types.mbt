@@ -3,7 +3,7 @@
 ///
 /// Additive changes bump the minor; any breaking change to a client-visible
 /// event or field bumps the major. See `docs/contract.md`.
-pub let protocol_version : String = "0.2.0"
+pub let protocol_version : String = "0.3.0"
 
 ///|
 /// Capability IDs are the only stable feature check for clients.
@@ -27,10 +27,14 @@ pub let capability_interrupt : String = "realtime.interrupt"
 pub let capability_playback_clear : String = "realtime.playback-clear"
 
 ///|
+/// The gateway reports background task progress (`task.updated`).
+pub let capability_task : String = "realtime.task"
+
+///|
 pub fn all_capabilities() -> Array[String] {
   [
     capability_session, capability_audio_in, capability_audio_out, capability_text_in,
-    capability_interrupt, capability_playback_clear,
+    capability_interrupt, capability_playback_clear, capability_task,
   ]
 }
 
@@ -129,6 +133,14 @@ pub(all) enum ServerEvent {
   /// Stop playing buffered audio. `reason` is a stable token such as
   /// `user_interruption`; clients must not branch on free-form text.
   PlaybackClear(session_id~ : String, reason~ : String)
+  /// Background task progress. `status` is one of `running`, `completed`,
+  /// `failed`; `text` carries the accumulated result so far and may be empty.
+  TaskUpdated(
+    session_id~ : String,
+    task_id~ : String,
+    status~ : String,
+    text~ : String
+  )
   Error(code~ : ErrorCode, message~ : String, retryable~ : Bool)
 } derive(Eq, Debug)
 

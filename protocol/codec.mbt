@@ -237,6 +237,14 @@ pub fn encode_server_event(event : ServerEvent) -> Json {
         ("sessionId", Json::string(session_id)),
         ("reason", Json::string(reason)),
       ])
+    TaskUpdated(session_id~, task_id~, status~, text~) =>
+      make_object([
+        ("type", Json::string("task.updated")),
+        ("sessionId", Json::string(session_id)),
+        ("taskId", Json::string(task_id)),
+        ("status", Json::string(status)),
+        ("text", Json::string(text)),
+      ])
     Error(code~, message~, retryable~) =>
       make_object([
         ("type", Json::string("error")),
@@ -301,6 +309,15 @@ fn decode_server_event_raise(
         PlaybackClear(
           session_id=string_field(map, "sessionId"),
           reason=string_field(map, "reason"),
+        ),
+      )
+    "task.updated" =>
+      Some(
+        TaskUpdated(
+          session_id=string_field(map, "sessionId"),
+          task_id=string_field(map, "taskId"),
+          status=string_field(map, "status"),
+          text=string_field(map, "text"),
         ),
       )
     "error" =>
