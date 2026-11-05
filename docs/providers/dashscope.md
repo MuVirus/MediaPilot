@@ -116,6 +116,14 @@ response.done
 `response.output_item.done`、`response.done`。也就是说 cancel 之后仍会收到收尾事件，
 网关必须按 `response.done` 结束本轮，不能把收尾事件当成新回复。
 
+**空闲时不能无条件 cancel**：没有进行中的回复时发送 `response.cancel`，服务端返回
+`error`，消息是 `Conversation has no active response.`。这会被映射成
+`provider_unavailable`，让客户端误以为需要重连。适配器必须记录
+`response.created` / `response.done` 之间的状态，只在有活动回复时取消。
+
+`input_audio_buffer.clear` 在服务端 VAD 下也不需要随打断发送：输入音频已经由
+`speech_stopped` 自动提交，clear 只会影响用户正在说的内容。
+
 ## 已知限制
 
 - 一个会话只有一个 response slot。并发 `response.create` 会被拒绝，

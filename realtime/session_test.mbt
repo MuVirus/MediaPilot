@@ -72,6 +72,21 @@ test "interruption becomes playback.clear" {
 }
 
 ///|
+test "response started has no northbound event" {
+  let mapped : @protocol.ServerEvent? = @realtime.to_server_event(
+    "s-1",
+    @realtime.ProviderEvent::ResponseStarted,
+  )
+  assert_eq(mapped, None)
+}
+
+///|
+test "response.created is normalized as a turn start" {
+  let decoded = @realtime.normalize_incoming("{\"type\":\"response.created\"}").unwrap()
+  assert_eq(decoded, Some(@realtime.ProviderEvent::ResponseStarted))
+}
+
+///|
 test "turn completion has no northbound event" {
   let mapped : @protocol.ServerEvent? = @realtime.to_server_event(
     "s-1",

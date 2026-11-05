@@ -86,9 +86,12 @@ connect → session.hello → session.ready → streaming → session.close
 
 ## 背压与打断
 
-- 客户端发送音频过快时，网关对上游写入做有界排队；超过上限断开并返回
-  `error`，不能无限占内存。
-- `session.interrupt` 必须先取消上游当前回复，再清空网关待发送队列，最后回确认。
+- 下发方向：`audio.delta` 走有界队列（256 条）。客户端读得太慢时，上游读取
+  协程被阻塞，不会无限占内存。
+- 上行方向：网关逐帧读取并等待上游写入完成，超量数据由 TCP 接收缓冲和上游
+  写入速度限制；进程内不为上行音频额外排队。
+- `session.interrupt` 的顺序固定：取消上游当前回复 → 丢弃网关待发送队列中属于
+  该回复的 `audio.delta` → 向客户端回 `playback.clear`（`reason = "client_interrupt"`）。
 - 下行 `audio.delta` 只保证会话内顺序，不保证与转写事件严格交错。
 
 ## 目标与平台

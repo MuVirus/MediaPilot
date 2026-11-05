@@ -114,8 +114,26 @@
 所有服务端事件都带 `type`；除 `error` 外都带 `sessionId`。事件不保证跨会话有序，
 同一会话内按发送顺序处理。
 
-`playback.clear` 的 `reason` 是稳定 token，当前只有 `user_interruption`：
-服务端 VAD 检测到用户开始说话。客户端必须丢弃本地待播放缓冲，不能只暂停。
+`playback.clear` 的 `reason` 是稳定 token，客户端不得依赖自由文本：
+
+| `reason` | 含义 |
+| --- | --- |
+| `user_interruption` | 服务端 VAD 检测到用户开始说话 |
+| `client_interrupt` | 服务端已处理 `session.interrupt`，这是打断确认 |
+
+收到 `playback.clear` 后，客户端必须丢弃本地待播放缓冲，不能只暂停。
+
+## 断线与重连
+
+- 上游断开时，网关先发 `error`（`code = "provider_unavailable"`，
+  `retryable = true`），再关闭 WS。
+- 不可恢复的错误（如 `provider_auth_failed`）`retryable = false`，客户端不应重试。
+- 网关不做透明重放：重连是一条新连接、新会话、新 `sessionId`，之前的
+  未播放音频和未完成回复都会丢失。
+- 客户端自行 `session.close` 或主动断开时，服务端不保证发出 `error`。
+- 网关保证一个 WS 连接对应一个上游连接；客户端断开时上游连接必须关闭。
+
+以上四条由 `gateway/integration_test.mbt` 锁定（上游关闭、客户端关闭、打断顺序）。
 
 ## 音频约定
 

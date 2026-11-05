@@ -9,6 +9,11 @@ pub struct DashScopeSession {
   input_rate : Int32
   output_rate : Int32
   mut closed : Bool
+  /// True between `response.created` and `response.done`. Cancelling when no
+  /// response is active makes DashScope answer with
+  /// `Conversation has no active response.`, which would surface to the client
+  /// as a spurious provider error.
+  mut response_active : Bool
 }
 
 ///|
@@ -21,6 +26,7 @@ pub fn to_server_event(
   event : ProviderEvent,
 ) -> @protocol.ServerEvent? {
   match event {
+    ResponseStarted => None
     AudioDelta(delta~, sample_rate~) =>
       Some(
         @protocol.ServerEvent::AudioDelta(
@@ -81,7 +87,14 @@ async fn DashScopeSession::recv_event(
         Err(error) => raise error
       }
       match event {
-        Some(provider_event) => to_server_event(self.session_id, provider_event)
+        Some(provider_event) => {
+          match provider_event {
+            ResponseStarted => self.response_active = true
+            TurnComplete => self.response_active = false
+            _ => ()
+          }
+          to_server_event(self.session_id, provider_event)
+        }
         None => None
       }
     }
@@ -111,6 +124,7 @@ pub async fn DashScopeSession::open(
     input_rate: provider.input_sample_rate(),
     output_rate: provider.output_sample_rate(),
     closed: false,
+    response_active: false,
   }
   // The provider sends `session.created` before it accepts any command.
   let _ = session.recv_event(10000) catch {
@@ -162,11 +176,20 @@ pub async fn DashScopeSession::send_text(
 }
 
 ///|
+/// Cancel the in-flight response, if there is one.
+///
+/// Sending `response.cancel` while idle makes DashScope answer with
+/// `Conversation has no active response.`, so the adapter tracks response
+/// state instead of cancelling blindly. `input_audio_buffer.clear` is not sent
+/// either: with server-side VAD the input buffer is already committed, and
+/// clearing it would discard audio the user is still speaking.
 pub async fn DashScopeSession::interrupt(
   self : DashScopeSession,
 ) -> Unit raise ProviderError {
-  send_frame(self.ws, encode_response_cancel().stringify())
-  send_frame(self.ws, encode_audio_clear().stringify())
+  if self.response_active {
+    self.response_active = false
+    send_frame(self.ws, encode_response_cancel().stringify())
+  }
 }
 
 ///|

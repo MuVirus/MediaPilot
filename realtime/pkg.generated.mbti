@@ -66,6 +66,7 @@ pub struct DashScopeSession {
   input_rate : Int32
   output_rate : Int32
   mut closed : Bool
+  mut response_active : Bool
 }
 pub async fn DashScopeSession::close(Self) -> Unit
 pub fn DashScopeSession::input_sample_rate(Self) -> Int32
@@ -85,6 +86,7 @@ pub(all) struct ProviderConfig {
 } derive(Eq, @debug.Debug)
 
 pub(all) enum ProviderEvent {
+  ResponseStarted
   AudioDelta(delta~ : String, sample_rate~ : Int32)
   TranscriptPartial(role~ : String, text~ : String)
   TranscriptFinal(role~ : String, text~ : String)

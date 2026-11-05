@@ -217,7 +217,7 @@ async fn handle_realtime(
       capabilities~,
     ),
   )
-  bridge(ws, provider)
+  bridge(ws, provider, session_id)
   provider.close()
 }
 
@@ -268,17 +268,23 @@ async fn read_client_event(
 async fn bridge(
   ws : @websocket.Conn,
   provider : &@ports.RealtimeProvider,
+  session_id : String,
 ) -> Unit {
   let outbound : @aqueue.Queue[@protocol.ServerEvent?] = @aqueue.Queue(
     kind=Blocking(outbound_capacity),
   )
   let done : @aqueue.Queue[Unit] = @aqueue.Queue(kind=Blocking(1))
+  // Set when the client closed on purpose, so an upstream shutdown is not
+  // reported back as a retryable error.
+  let client_closing : Ref[Bool] = Ref(false)
   @async.with_task_group() <| group => {
     group.spawn_bg(no_wait=true) <| () => {
-      client_pump(ws, provider, outbound)
+      client_pump(ws, provider, session_id, outbound, client_closing)
       done.put(())
     }
-    group.spawn_bg(no_wait=true) <| () => { provider_pump(provider, outbound) }
+    group.spawn_bg(no_wait=true) <| () => {
+      provider_pump(provider, outbound, client_closing)
+    }
     group.spawn_bg(no_wait=true) <| () => {
       writer_pump(ws, outbound)
       done.put(())
@@ -288,14 +294,45 @@ async fn bridge(
 }
 
 ///|
+/// Drop queued events that belong to the response the user just cancelled.
+///
+/// The sentinel is put back so the writer still learns the session ended.
+async fn drain_outbound(
+  outbound : @aqueue.Queue[@protocol.ServerEvent?],
+) -> Unit {
+  let mut sentinel = false
+  for ;; {
+    let item = outbound.try_get() catch { _ => break }
+    match item {
+      Some(Some(_)) => ()
+      Some(None) => {
+        sentinel = true
+        break
+      }
+      None => break
+    }
+  }
+  if sentinel {
+    outbound.put(None)
+  }
+}
+
+///|
 async fn client_pump(
   ws : @websocket.Conn,
   provider : &@ports.RealtimeProvider,
+  session_id : String,
   outbound : @aqueue.Queue[@protocol.ServerEvent?],
+  client_closing : Ref[Bool],
 ) -> Unit {
   let input_rate = provider.input_sample_rate()
   for ;; {
-    let raw = ws.recv().text.read_all() catch { _ => return }
+    let raw = ws.recv().text.read_all() catch {
+      _ => {
+        client_closing.val = true
+        return
+      }
+    }
     let event = match @protocol.decode_client_event(raw) {
       Ok(event) => event
       Err(error) => {
@@ -353,8 +390,24 @@ async fn client_pump(
           provider.send_audio(data)
         }
       Some(@protocol.ClientEvent::Text(text~)) => provider.send_text(text)
-      Some(@protocol.ClientEvent::Interrupt) => provider.interrupt()
-      Some(@protocol.ClientEvent::Close) => return
+      Some(@protocol.ClientEvent::Interrupt) => {
+        // Cancel upstream first, then drop audio already queued for the
+        // cancelled response, then confirm to the client.
+        provider.interrupt()
+        drain_outbound(outbound)
+        outbound.put(
+          Some(
+            @protocol.ServerEvent::PlaybackClear(
+              session_id~,
+              reason="client_interrupt",
+            ),
+          ),
+        )
+      }
+      Some(@protocol.ClientEvent::Close) => {
+        client_closing.val = true
+        return
+      }
       Some(@protocol.ClientEvent::ImageAppend(..)) =>
         outbound.put(
           Some(
@@ -373,11 +426,23 @@ async fn client_pump(
 async fn provider_pump(
   provider : &@ports.RealtimeProvider,
   outbound : @aqueue.Queue[@protocol.ServerEvent?],
+  client_closing : Ref[Bool],
 ) -> Unit {
   for ;; {
     match provider.next_event() {
       Some(event) => outbound.put(Some(event))
       None => {
+        if !client_closing.val {
+          outbound.put(
+            Some(
+              @protocol.ServerEvent::Error(
+                code=@protocol.ErrorCode::ProviderUnavailable,
+                message="upstream closed the realtime session",
+                retryable=true,
+              ),
+            ),
+          )
+        }
         outbound.put(None)
         return
       }

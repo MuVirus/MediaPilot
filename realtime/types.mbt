@@ -4,6 +4,9 @@
 /// The gateway turns these into `@protocol.ServerEvent` values by adding the
 /// session ID. Provider adapters must never return raw provider JSON.
 pub(all) enum ProviderEvent {
+  /// The provider started a response. Adapters use this to track whether an
+  /// explicit cancel is meaningful; it has no northbound representation.
+  ResponseStarted
   AudioDelta(delta~ : String, sample_rate~ : Int32)
   TranscriptPartial(role~ : String, text~ : String)
   TranscriptFinal(role~ : String, text~ : String)

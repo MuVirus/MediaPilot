@@ -275,6 +275,7 @@ fn normalize_object(
         ),
       )
     "input_audio_buffer.speech_started" => Ok(Some(Interrupted))
+    "response.created" => Ok(Some(ResponseStarted))
     "response.done" => Ok(Some(TurnComplete))
     "error" => Ok(Some(error_event(map)))
     _ => Ok(None)

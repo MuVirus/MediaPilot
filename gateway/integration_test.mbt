@@ -305,14 +305,82 @@ async test "provider events are forwarded to the client" {
 }
 
 ///|
-async test "provider close ends the client session" {
+async test "provider close reports a retryable error, then closes" {
   let provider = FakeProvider::new()
   with_gateway(provider, async fn(ws) {
     hello(ws)
     let _ = read_event(ws)
     provider.finish()
-    // The gateway closes the socket; the next read must not yield an event.
-    let next = read_event(ws)
-    assert_eq(next, None)
+    match read_event(ws) {
+      Some(@protocol.ServerEvent::Error(code~, retryable~, ..)) => {
+        assert_eq(code, @protocol.ErrorCode::ProviderUnavailable)
+        assert_true(retryable)
+      }
+      _ => panic()
+    }
+    // After the error the gateway closes the socket.
+    assert_eq(read_event(ws), None)
+  })
+}
+
+///|
+async test "interrupt confirms with playback.clear and stops audio" {
+  let provider = FakeProvider::new()
+  with_gateway(provider, async fn(ws) {
+    hello(ws)
+    let _ = read_event(ws)
+    for _ in 0..<5 {
+      provider.push(
+        @protocol.ServerEvent::AudioDelta(
+          session_id="s-1",
+          data="AAEC",
+          format="pcm16",
+          sample_rate=24000,
+          channels=1,
+        ),
+      )
+    }
+    send_client(ws, @protocol.ClientEvent::Interrupt)
+    // Audio may still arrive for the chunks already in flight; the gateway
+    // must send playback.clear and then stop forwarding that response.
+    let mut cleared = false
+    for _ in 0..<12 {
+      match read_event(ws) {
+        Some(@protocol.ServerEvent::PlaybackClear(reason~, ..)) => {
+          assert_eq(reason, "client_interrupt")
+          cleared = true
+          break
+        }
+        Some(_) => ()
+        None => break
+      }
+    }
+    assert_true(cleared)
+    assert_true(provider.interrupted)
+    // Nothing queued for the cancelled response may follow the clear.
+    for _ in 0..<5 {
+      match read_event(ws) {
+        Some(@protocol.ServerEvent::AudioDelta(..)) =>
+          fail("audio delta arrived after playback.clear")
+        Some(_) => ()
+        None => break
+      }
+    }
+  })
+}
+
+///|
+async test "client close is not reported as a provider error" {
+  let provider = FakeProvider::new()
+  with_gateway(provider, async fn(ws) {
+    hello(ws)
+    let _ = read_event(ws)
+    send_client(ws, @protocol.ClientEvent::Close)
+    // The session ends without an error event; the socket simply closes.
+    match read_event(ws) {
+      Some(@protocol.ServerEvent::Error(..)) =>
+        fail("client close must not produce an error event")
+      _ => ()
+    }
   })
 }

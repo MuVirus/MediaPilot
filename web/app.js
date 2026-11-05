@@ -4,12 +4,15 @@
 // - capture the microphone at 16 kHz mono PCM16 and stream it to the gateway
 // - play 24 kHz mono PCM16 deltas in order
 // - stop playback immediately on `playback.clear`
+// - reconnect with backoff after a retryable disconnect
 //
 // The gateway owns VAD and turn detection, so this client never sends
 // `input_audio_buffer.commit`; it just streams while the mic is on.
 
 const INPUT_RATE = 16000;
 const OUTPUT_RATE = 24000;
+const MAX_BACKOFF_MS = 8000;
+const MAX_RECONNECT_ATTEMPTS = 8;
 
 const els = {
   start: document.getElementById("start"),
@@ -28,9 +31,15 @@ let workletNode = null;
 let sourceNode = null;
 let nextPlayAt = 0;
 const activeSources = new Set();
+
+let running = false;
+let fatal = false;
+let reconnectAttempt = 0;
+let reconnectTimer = null;
+let sessionId = "";
+let receivedAudioSeconds = 0;
 let assistantLine = null;
 let userLine = null;
-let receivedAudioSeconds = 0;
 
 function log(message) {
   const line = `${new Date().toLocaleTimeString()} ${message}`;
@@ -42,14 +51,19 @@ function setStatus(text) {
 }
 
 function refreshStatus() {
+  if (!running) return;
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  setStatus(`已连接 · 已接收 ${receivedAudioSeconds.toFixed(1)}s 音频`);
+  setStatus(
+    `已连接 · 已接收 ${receivedAudioSeconds.toFixed(1)}s 音频` +
+      (sessionId ? ` · ${sessionId}` : ""),
+  );
 }
 
-function setRunning(running) {
-  els.start.disabled = running;
-  els.stop.disabled = !running;
-  els.interrupt.disabled = !running;
+function setRunning(value) {
+  running = value;
+  els.start.disabled = value;
+  els.stop.disabled = !value;
+  els.interrupt.disabled = !value;
 }
 
 function base64ToBytes(base64) {
@@ -69,21 +83,23 @@ function bytesToBase64(bytes) {
 }
 
 function int16ToBase64(int16) {
-  return bytesToBase64(new Uint8Array(int16.buffer, int16.byteOffset, int16.byteLength));
+  return bytesToBase64(
+    new Uint8Array(int16.buffer, int16.byteOffset, int16.byteLength),
+  );
 }
 
 function lineFor(role) {
-  const key = role === "user" ? "user" : "assistant";
-  if (key === "user" && userLine) return userLine;
-  if (key === "assistant" && assistantLine) return assistantLine;
+  const isUser = role === "user";
+  if (isUser && userLine) return userLine;
+  if (!isUser && assistantLine) return assistantLine;
   const div = document.createElement("div");
   const label = document.createElement("span");
   label.className = "role";
-  label.textContent = key === "user" ? "你" : "助手";
+  label.textContent = isUser ? "你" : "助手";
   const text = document.createElement("span");
   div.append(label, text);
   els.transcript.append(div);
-  if (key === "user") userLine = text;
+  if (isUser) userLine = text;
   else assistantLine = text;
   return text;
 }
@@ -107,7 +123,11 @@ function stopPlayback() {
 
 function playPcm16(bytes) {
   if (!playbackContext) return;
-  const samples = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
+  const samples = new Int16Array(
+    bytes.buffer,
+    bytes.byteOffset,
+    Math.floor(bytes.byteLength / 2),
+  );
   const buffer = playbackContext.createBuffer(1, samples.length, OUTPUT_RATE);
   const channel = buffer.getChannelData(0);
   for (let i = 0; i < samples.length; i++) channel[i] = samples[i] / 0x8000;
@@ -124,15 +144,19 @@ function playPcm16(bytes) {
 }
 
 function send(event) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
   ws.send(JSON.stringify(event));
+  return true;
 }
 
 function handleServerEvent(event) {
   switch (event.type) {
     case "session.ready":
-      log(`ready session=${event.sessionId} caps=${event.capabilities.join(",")}`);
-      setStatus("已连接，开始说话");
+      sessionId = event.sessionId;
+      reconnectAttempt = 0;
+      receivedAudioSeconds = 0;
+      log(`ready session=${event.sessionId}`);
+      refreshStatus();
       break;
     case "transcript.partial":
       lineFor(event.role).textContent = event.text;
@@ -155,7 +179,12 @@ function handleServerEvent(event) {
       break;
     case "error":
       log(`error ${event.code}: ${event.message}`);
-      setStatus(`错误：${event.code}`);
+      if (!event.retryable) {
+        fatal = true;
+        setStatus(`不可恢复的错误：${event.code}`);
+      } else {
+        setStatus(`上游错误：${event.code}，等待重连`);
+      }
       break;
     default:
       log(`event ${event.type}`);
@@ -193,16 +222,16 @@ async function startCapture() {
   mute.connect(captureContext.destination);
 }
 
-async function start() {
-  setRunning(true);
-  setStatus("连接中…");
-  resetLines();
-  els.transcript.textContent = "";
-  playbackContext = new AudioContext({ sampleRate: OUTPUT_RATE });
+function socketUrl() {
+  const scheme = location.protocol === "https:" ? "wss" : "ws";
+  return `${scheme}://${location.host}/api/realtime`;
+}
 
-  const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/realtime`;
-  ws = new WebSocket(url);
-  ws.onopen = async () => {
+function connectSocket() {
+  const socket = new WebSocket(socketUrl());
+  ws = socket;
+  socket.onopen = () => {
+    if (ws !== socket) return;
     send({
       type: "session.hello",
       requestId: `c-${Date.now()}`,
@@ -215,16 +244,10 @@ async function start() {
         "realtime.playback-clear",
       ],
     });
-    try {
-      await startCapture();
-      log("microphone streaming");
-    } catch (error) {
-      log(`microphone failed: ${error}`);
-      setStatus("麦克风不可用");
-      stop();
-    }
+    log("socket open, hello sent");
+    setStatus("握手中…");
   };
-  ws.onmessage = (message) => {
+  socket.onmessage = (message) => {
     let event;
     try {
       event = JSON.parse(message.data);
@@ -234,15 +257,57 @@ async function start() {
     }
     handleServerEvent(event);
   };
-  ws.onclose = () => {
-    log("socket closed");
-    setStatus("已断开");
-    setRunning(false);
+  socket.onclose = () => {
+    if (ws !== socket) return;
+    ws = null;
+    onSocketClosed();
   };
-  ws.onerror = () => log("socket error");
+  socket.onerror = () => log("socket error");
 }
 
-function stop() {
+function onSocketClosed() {
+  stopPlayback();
+  if (fatal) {
+    setStatus("已停止：不可恢复的错误");
+    setRunning(false);
+    return;
+  }
+  if (!running) {
+    setStatus("未连接");
+    return;
+  }
+  scheduleReconnect();
+}
+
+function scheduleReconnect() {
+  if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+    log(`giving up after ${reconnectAttempt} attempts`);
+    setStatus("重连失败，请点“开始”重试");
+    teardown();
+    return;
+  }
+  reconnectAttempt += 1;
+  const delay = Math.min(
+    MAX_BACKOFF_MS,
+    500 * 2 ** Math.max(0, reconnectAttempt - 1),
+  );
+  setStatus(`连接断开，${delay} ms 后重连（第 ${reconnectAttempt} 次）`);
+  log(`reconnect in ${delay} ms (attempt ${reconnectAttempt})`);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    if (running && !fatal) connectSocket();
+  }, delay);
+}
+
+function clearReconnect() {
+  if (reconnectTimer !== null) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+}
+
+function teardown() {
+  clearReconnect();
   if (workletNode) {
     workletNode.port.onmessage = null;
     workletNode.disconnect();
@@ -266,29 +331,68 @@ function stop() {
     playbackContext = null;
   }
   if (ws) {
-    if (ws.readyState === WebSocket.OPEN) {
-      send({ type: "session.close" });
+    try {
+      ws.close();
+    } catch {
+      // already closed
     }
-    ws.close();
     ws = null;
   }
   setRunning(false);
+}
+
+async function start() {
+  if (running) return;
+  fatal = false;
+  reconnectAttempt = 0;
+  receivedAudioSeconds = 0;
+  sessionId = "";
+  setRunning(true);
+  setStatus("连接中…");
+  resetLines();
+  els.transcript.textContent = "";
+
+  try {
+    playbackContext = new AudioContext({ sampleRate: OUTPUT_RATE });
+    await startCapture();
+    log("microphone streaming");
+  } catch (error) {
+    log(`microphone failed: ${error}`);
+    setStatus("麦克风不可用，需要 https 或 127.0.0.1");
+    teardown();
+    return;
+  }
+  connectSocket();
+}
+
+function stop() {
+  if (!running) return;
+  const wasOpen = ws && ws.readyState === WebSocket.OPEN;
+  if (wasOpen) send({ type: "session.close" });
+  teardown();
   setStatus("未连接");
+  log("stopped");
 }
 
 els.start.addEventListener("click", () => {
   start().catch((error) => {
     log(`start failed: ${error}`);
-    stop();
+    teardown();
+    setStatus("启动失败");
   });
 });
 els.stop.addEventListener("click", stop);
 els.interrupt.addEventListener("click", () => {
   stopPlayback();
-  send({ type: "session.interrupt" });
-  log("interrupt sent");
+  if (send({ type: "session.interrupt" })) log("interrupt sent");
 });
 
 // Debug hook for the headless smoke test and for manual poking in devtools.
 // Not part of the gateway contract.
-window.mediapilot = { send, stopPlayback };
+window.mediapilot = {
+  send,
+  stopPlayback,
+  dropSocket: () => {
+    if (ws) ws.close();
+  },
+};
