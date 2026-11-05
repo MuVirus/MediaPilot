@@ -19,6 +19,13 @@ test "connect url selects the model" {
 }
 
 ///|
+test "audio contract is 16 kHz in and 24 kHz out" {
+  let provider = @realtime.DashScopeProvider::new(test_config())
+  assert_eq(provider.input_sample_rate(), 16000)
+  assert_eq(provider.output_sample_rate(), 24000)
+}
+
+///|
 test "connect url keeps an existing query" {
   let provider = @realtime.DashScopeProvider::new(@realtime.ProviderConfig::{
     api_key: "k",
@@ -126,4 +133,87 @@ test "outgoing frames use the provider wire format" {
   let encoded = @realtime.encode_audio_append("AAEC").stringify()
   assert_true(encoded.contains("\"input_audio_buffer.append\""))
   assert_true(encoded.contains("\"audio\":\"AAEC\""))
+}
+
+///|
+test "session update carries the audio contract" {
+  let encoded = @realtime.encode_session_update("longanqian_v3.1", "be brief")
+  let parsed = @json.parse(encoded.stringify())
+  let session = match parsed {
+    Json::Object(root) =>
+      match root.get("session") {
+        Some(Json::Object(session)) => session
+        _ => panic()
+      }
+    _ => panic()
+  }
+  assert_eq(
+    match parsed {
+      Json::Object(root) => root.get("type")
+      _ => None
+    },
+    Some(Json::string("session.update")),
+  )
+  assert_eq(session.get("voice"), Some(Json::string("longanqian_v3.1")))
+  assert_eq(session.get("input_audio_format"), Some(Json::string("pcm")))
+  assert_eq(session.get("output_audio_format"), Some(Json::string("pcm")))
+  assert_eq(session.get("turn_detection"), None)
+}
+
+///|
+test "session update adds turn detection when requested" {
+  let encoded = @realtime.encode_session_update(
+    "longanqian_v3.1",
+    "be brief",
+    turn_detection="smart_turn_v2",
+  )
+  let parsed = @json.parse(encoded.stringify())
+  let session = match parsed {
+    Json::Object(root) =>
+      match root.get("session") {
+        Some(Json::Object(session)) => session
+        _ => panic()
+      }
+    _ => panic()
+  }
+  assert_eq(
+    session.get("turn_detection"),
+    Some(Json::object({ "type": Json::string("smart_turn_v2") })),
+  )
+}
+
+///|
+test "provider session update defaults to server turn detection" {
+  let provider = @realtime.DashScopeProvider::new(test_config())
+  let encoded = provider.session_update("be brief")
+  let parsed = @json.parse(encoded.stringify())
+  let session = match parsed {
+    Json::Object(root) =>
+      match root.get("session") {
+        Some(Json::Object(session)) => session
+        _ => panic()
+      }
+    _ => panic()
+  }
+  assert_eq(
+    session.get("turn_detection"),
+    Some(
+      Json::object({
+        "type": Json::string(@realtime.dashscope_default_turn_detection),
+      }),
+    ),
+  )
+  assert_eq(session.get("voice"), Some(Json::string("Cherry")))
+}
+
+///|
+test "commit and clear frames use the provider wire format" {
+  assert_eq(
+    @realtime.encode_audio_commit().stringify(),
+    "{\"type\":\"input_audio_buffer.commit\"}",
+  )
+  assert_eq(
+    @realtime.encode_audio_clear().stringify(),
+    "{\"type\":\"input_audio_buffer.clear\"}",
+  )
 }

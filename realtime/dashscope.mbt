@@ -8,6 +8,12 @@ pub let dashscope_input_sample_rate : Int32 = 16000
 pub let dashscope_output_sample_rate : Int32 = 24000
 
 ///|
+/// Turn detection used by the Qwen Audio 3.x realtime family. Verified against
+/// `qwen-audio-3.1-realtime-flash`: the server emits `speech_started`,
+/// `speech_stopped`, `committed`, then creates the response itself.
+pub let dashscope_default_turn_detection : String = "smart_turn_v2"
+
+///|
 /// DashScope Realtime adapter skeleton.
 ///
 /// Transport (WebSocket connect, send, receive) is added in the P0 spike.
@@ -51,6 +57,28 @@ pub fn DashScopeProvider::output_sample_rate(self : DashScopeProvider) -> Int32 
 }
 
 ///|
+/// The `session.update` frame this provider expects for a voice session.
+///
+/// Server-side turn detection is on by default because the Qwen Audio 3.x
+/// family drives turns itself. Use `encode_session_update` directly when a test
+/// needs manual `input_audio_buffer.commit` instead.
+pub fn DashScopeProvider::session_update(
+  self : DashScopeProvider,
+  instructions : String,
+  turn_detection? : String,
+) -> Json {
+  let detection = match turn_detection {
+    Some(kind) => kind
+    None => dashscope_default_turn_detection
+  }
+  encode_session_update(
+    self.config.voice,
+    instructions,
+    turn_detection=detection,
+  )
+}
+
+///|
 pub fn encode_audio_append(audio : String) -> Json {
   Json::object({
     "type": Json::string("input_audio_buffer.append"),
@@ -73,6 +101,52 @@ pub fn encode_text_message(text : String) -> Json {
       ]),
     }),
   })
+}
+
+///|
+/// Minimal DashScope `session.update`.
+///
+/// `turn_detection` is optional so the smoke command can isolate transport and
+/// auth failures from VAD configuration. Production sessions set it to the
+/// provider-appropriate value (`smart_turn_v2` for the Qwen Audio 3.1 family)
+/// so the server creates responses automatically.
+pub fn encode_session_update(
+  voice : String,
+  instructions : String,
+  turn_detection? : String,
+) -> Json {
+  let session : Map[String, Json] = {
+    "modalities": Json::array([Json::string("text"), Json::string("audio")]),
+    "instructions": Json::string(instructions),
+    "voice": Json::string(voice),
+    "input_audio_format": Json::string("pcm"),
+    "output_audio_format": Json::string("pcm"),
+  }
+  match turn_detection {
+    Some(kind) =>
+      session.set(
+        "turn_detection",
+        Json::object({ "type": Json::string(kind) }),
+      )
+    None => ()
+  }
+  Json::object({
+    "type": Json::string("session.update"),
+    "session": Json::object(session),
+  })
+}
+
+///|
+/// Close the current input audio buffer so the provider treats it as one turn.
+pub fn encode_audio_commit() -> Json {
+  Json::object({ "type": Json::string("input_audio_buffer.commit") })
+}
+
+///|
+/// Discard buffered input. Used together with `response.cancel` when the user
+/// interrupts the assistant.
+pub fn encode_audio_clear() -> Json {
+  Json::object({ "type": Json::string("input_audio_buffer.clear") })
 }
 
 ///|

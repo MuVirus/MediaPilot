@@ -116,6 +116,8 @@
 - 网关必须在 `error.message` 中说明格式不匹配的具体字段，不能只说“invalid audio”。
 - 打断后，服务端必须停止发送旧回复的 `audio.delta`；客户端收到 `session.interrupt`
   的确认前可以丢弃本地待播放缓冲。
+- 16 kHz / 24 kHz 常量由 `realtime/dashscope_test.mbt` 锁定；上游 wire 细节见
+  [providers/dashscope.md](providers/dashscope.md)，不属于本契约。
 
 ## 错误码
 

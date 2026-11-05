@@ -4,3 +4,6 @@ target/
 target
 .mooncakes/
 .moonagent/
+.env
+.env.*
+!.env.example

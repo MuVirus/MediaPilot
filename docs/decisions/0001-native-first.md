@@ -9,7 +9,7 @@
 参考项目 `qwen-audio-agent` 是 Node.js 全栈，音频采集与播放靠浏览器/Electron 的
 WebAudio 完成，服务端只处理 PCM 流。MoonBit 侧的情况不同：
 
-- `moonbitlang/async` 提供 native WebSocket server/client，已在 Windows 验证可用。
+- `moonbitlang/core/async`（核心库内置）提供 native WebSocket server/client，已在 Windows 验证可用。
 - `moonbit-community/moon_cpal` 能枚举输入/输出设备，已在 Windows 验证可用。
 - 原生音频没有成熟的 AEC、降噪、自动增益；浏览器 WebAudio 天然具备。
 - 根模块原先 `preferred_target = "wasm"`，而音频与 socket 依赖 native。

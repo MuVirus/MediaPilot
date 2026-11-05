@@ -56,10 +56,16 @@ it.
 - Input audio: PCM16, mono, 16 kHz unless the provider requires otherwise.
 - Output audio: record the actual rate; do not assume it matches input.
 - Chunking: adapter accepts arbitrary chunk sizes and buffers if needed.
+- Pacing: some providers run server-side VAD and only end a turn when audio
+  arrives in real time. Sending a whole utterance in one burst can leave the
+  turn open forever. Record the required pacing and test it.
 - Interrupt: know whether the provider needs an explicit cancel and whether
   stale audio can still arrive after cancel.
 - Keepalive: record ping/pong or heartbeat requirements and timeouts.
 - Auth: read from config/env; never log the key or full URL with query token.
+
+Write the verified facts to `docs/providers/<provider>.md` once a live
+connection succeeds. That page is the reference for the next adapter.
 
 ## 5. Error mapping
 
@@ -87,5 +93,6 @@ and a human-readable message without secrets.
 - [ ] Provider JSON never escapes `realtime/`.
 - [ ] New provider has a capability entry if it enables new behavior.
 - [ ] `docs/contract.md` unchanged unless the normalized surface changed.
+- [ ] `docs/providers/<provider>.md` records the verified wire facts.
 - [ ] Adapter closes the upstream connection on client disconnect.
 - [ ] `moon check --target native` and `moon test --target native` pass.

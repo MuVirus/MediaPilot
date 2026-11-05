@@ -9,11 +9,17 @@
 目标：证明 MoonBit 能在本机完成一次 DashScope Realtime 往返。
 
 - [x] `protocol/`：事件类型、JSON 编解码、能力常量，附往返测试。
-- [x] `realtime/`：`ProviderEvent` 归一化 + DashScope wire 骨架（URL、鉴权头、音频格式、事件映射）；socket 传输待做。
-- [ ] 连接 DashScope，发送 16 kHz PCM，收到 24 kHz PCM。
+- [x] `realtime/`：`ProviderEvent` 归一化 + DashScope wire 骨架（URL、鉴权头、音频格式、事件映射）。
+- [x] 连接 DashScope，发送 16 kHz PCM，收到 24 kHz PCM。见 `cmd/dashscope-smoke` 与 [providers/dashscope.md](providers/dashscope.md)。
 - [ ] 浏览器最小客户端：麦克风 → WS → 播放，能打断。
 - [ ] 记录首字延迟、端到端延迟、断线行为，写进 `docs/decisions/` 或本页。
 - [ ] 失败也要有结论：若 MoonBit async/WS 不可用，记录替代方案和影响范围。
+
+P0 已验证的事实：
+
+- `moonbitlang/core/async/websocket` 在 Windows 上可以完成 `wss://` 连接、TLS 握手和文本帧收发。
+- 一次完整语音轮次（VAD → 用户转写 → 助手音频 + 转写）在 MoonBit 进程内跑通，无 Node/Python 中间层。
+- 上行必须按实时节奏发送；一次性灌入整段音频时服务端 VAD 不会判定轮次结束。
 
 退出条件：本机一次完整“说话 → 转写 → 回复音频”跑通，且不依赖 Node/Python 中间层。
 

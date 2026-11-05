@@ -9,15 +9,23 @@ import {
 // Values
 pub let dashscope_default_endpoint : String
 
+pub let dashscope_default_turn_detection : String
+
 pub let dashscope_input_sample_rate : Int32
 
 pub let dashscope_output_sample_rate : Int32
 
 pub fn encode_audio_append(String) -> Json
 
+pub fn encode_audio_clear() -> Json
+
+pub fn encode_audio_commit() -> Json
+
 pub fn encode_response_cancel() -> Json
 
 pub fn encode_response_create() -> Json
+
+pub fn encode_session_update(String, String, turn_detection? : String) -> Json
 
 pub fn encode_text_message(String) -> Json
 
@@ -42,6 +50,7 @@ pub fn DashScopeProvider::connect_url(Self) -> String
 pub fn DashScopeProvider::input_sample_rate(Self) -> Int32
 pub fn DashScopeProvider::new(ProviderConfig) -> Self
 pub fn DashScopeProvider::output_sample_rate(Self) -> Int32
+pub fn DashScopeProvider::session_update(Self, String, turn_detection? : String) -> Json
 
 pub(all) struct ProviderConfig {
   api_key : String

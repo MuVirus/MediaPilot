@@ -21,7 +21,7 @@ production code.
 
 ## Known-good baseline (Windows, 2026-10)
 
-- `moonbitlang/async@0.22.7` — native WebSocket server/client works.
+- `moonbitlang/core/async`（核心库内置，无需单独安装）—— native WebSocket server/client 可用。
 - `moonbit-community/moon_cpal@0.11.8` — enumerates input/output devices.
 - `moon` 0.1.20261029.
 
