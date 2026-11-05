@@ -8,10 +8,99 @@ pub let dashscope_input_sample_rate : Int32 = 16000
 pub let dashscope_output_sample_rate : Int32 = 24000
 
 ///|
-/// Turn detection used by the Qwen Audio 3.x realtime family. Verified against
-/// `qwen-audio-3.1-realtime-flash`: the server emits `speech_started`,
-/// `speech_stopped`, `committed`, then creates the response itself.
+/// Turn detection used when the model is unknown. The Qwen Audio 3.1 family
+/// uses this; omni models need `semantic_vad` instead.
 pub let dashscope_default_turn_detection : String = "smart_turn_v2"
+
+///|
+/// Per-model defaults.
+///
+/// DashScope's realtime families differ in default voice, turn detection, and
+/// whether `tools` is safe to send. Sending `tools` to a model that does not
+/// support them fails silently: `session.update` is accepted, then every
+/// generation ends with `status = "failed"`. So the profile is the only place
+/// that decides whether tools may be attached.
+pub(all) struct ModelProfile {
+  model : String
+  /// Default voice, or `None` when the model is unknown and the configured
+  /// voice should be used as-is.
+  voice : String?
+  turn_detection : String
+  supports_tools : Bool
+} derive(Eq, Debug)
+
+///|
+/// Resolve a model ID to its profile.
+///
+/// Unknown models get the conservative defaults: no tools, `smart_turn_v2`.
+/// A new model that supports tools must be added here explicitly rather than
+/// guessed, because the failure mode is a silent empty response.
+pub fn resolve_model_profile(model : String) -> ModelProfile {
+  match model {
+    "qwen-audio-3.1-realtime-plus" =>
+      {
+        model,
+        voice: Some("longanqian_v3.1"),
+        turn_detection: "smart_turn_v2",
+        supports_tools: true,
+      }
+    // Verified broken: `session.update` accepts tools, then every generation
+    // fails with "An internal error occurred while generating the response."
+    "qwen-audio-3.1-realtime-flash" =>
+      {
+        model,
+        voice: Some("longanqian_v3.1"),
+        turn_detection: "smart_turn_v2",
+        supports_tools: false,
+      }
+    "qwen-audio-3.0-realtime-plus" =>
+      {
+        model,
+        voice: Some("longanqian"),
+        turn_detection: "smart_turn",
+        supports_tools: true,
+      }
+    "qwen-audio-3.0-realtime-flash" =>
+      {
+        model,
+        voice: Some("longanqian"),
+        turn_detection: "smart_turn",
+        supports_tools: true,
+      }
+    "qwen3.5-omni-flash-realtime" =>
+      {
+        model,
+        voice: Some("Ethan"),
+        turn_detection: "semantic_vad",
+        supports_tools: true,
+      }
+    "qwen3.5-omni-plus-realtime" =>
+      {
+        model,
+        voice: Some("Ethan"),
+        turn_detection: "semantic_vad",
+        supports_tools: true,
+      }
+    "qwen3.8-omni-flash-realtime" =>
+      {
+        model,
+        voice: Some("Tina"),
+        turn_detection: "semantic_vad",
+        supports_tools: true,
+      }
+    _ =>
+      {
+        model,
+        voice: None,
+        turn_detection: dashscope_default_turn_detection,
+        supports_tools: false,
+      }
+  }
+}
+
+///|
+/// The model this project defaults to. Matches the reference project's default.
+pub let dashscope_default_model : String = "qwen-audio-3.1-realtime-plus"
 
 ///|
 /// DashScope Realtime adapter skeleton.
@@ -57,35 +146,70 @@ pub fn DashScopeProvider::output_sample_rate(self : DashScopeProvider) -> Int32 
 }
 
 ///|
+/// The model profile this provider is configured for.
+pub fn DashScopeProvider::profile(self : DashScopeProvider) -> ModelProfile {
+  resolve_model_profile(self.config.model)
+}
+
+///|
+/// The voice to use: the configured voice when set, otherwise the model's
+/// default.
+pub fn DashScopeProvider::voice(self : DashScopeProvider) -> String {
+  if self.config.voice != "" {
+    self.config.voice
+  } else {
+    match self.profile().voice {
+      Some(voice) => voice
+      None => ""
+    }
+  }
+}
+
+///|
 /// The `session.update` frame this provider expects for a voice session.
 ///
-/// Server-side turn detection is on by default because the Qwen Audio 3.x
-/// family drives turns itself. Use `encode_session_update` directly when a test
-/// needs manual `input_audio_buffer.commit` instead.
+/// Turn detection comes from the model profile, because omni models need
+/// `semantic_vad` while the audio family uses `smart_turn*`. Use
+/// `encode_session_update` directly when a test needs manual
+/// `input_audio_buffer.commit` instead.
+///
+/// `tools` is dropped with a warning when the profile says the model cannot
+/// handle them: sending them anyway produces empty failed responses.
 pub fn DashScopeProvider::session_update(
   self : DashScopeProvider,
   instructions : String,
   turn_detection? : String,
   tools? : Json,
 ) -> Json {
+  let profile = self.profile()
   let detection = match turn_detection {
     Some(kind) => kind
-    None => dashscope_default_turn_detection
+    None => profile.turn_detection
   }
-  match tools {
+  let voice = self.voice()
+  let usable_tools = match tools {
+    Some(value) =>
+      if profile.supports_tools {
+        Some(value)
+      } else {
+        println(
+          "[realtime] model " +
+          profile.model +
+          " does not support tools; dropping the tool list",
+        )
+        None
+      }
+    None => None
+  }
+  match usable_tools {
     Some(value) =>
       encode_session_update(
-        self.config.voice,
+        voice,
         instructions,
         turn_detection=detection,
         tools=value,
       )
-    None =>
-      encode_session_update(
-        self.config.voice,
-        instructions,
-        turn_detection=detection,
-      )
+    None => encode_session_update(voice, instructions, turn_detection=detection)
   }
 }
 

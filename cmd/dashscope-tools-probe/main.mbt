@@ -222,7 +222,9 @@ async fn main {
   }
   let config = @realtime.ProviderConfig::{
     api_key,
-    model: env_or("MEDIAPILOT_REALTIME_MODEL", "qwen-audio-3.1-realtime-flash"),
+    model: env_or(
+      "MEDIAPILOT_REALTIME_MODEL", @realtime.dashscope_default_model,
+    ),
     endpoint: env_or(
       "MEDIAPILOT_REALTIME_ENDPOINT", @realtime.dashscope_default_endpoint,
     ),

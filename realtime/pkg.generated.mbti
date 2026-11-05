@@ -11,6 +11,8 @@ import {
 // Values
 pub let dashscope_default_endpoint : String
 
+pub let dashscope_default_model : String
+
 pub let dashscope_default_turn_detection : String
 
 pub let dashscope_input_sample_rate : Int32
@@ -39,6 +41,8 @@ pub fn normalize_event(Json) -> Result[ProviderEvent?, ProviderError]
 
 pub fn normalize_incoming(String) -> Result[ProviderEvent?, ProviderError]
 
+pub fn resolve_model_profile(String) -> ModelProfile
+
 pub fn to_server_event(String, ProviderEvent) -> @protocol.ServerEvent?
 
 // Errors
@@ -62,7 +66,9 @@ pub fn DashScopeProvider::connect_url(Self) -> String
 pub fn DashScopeProvider::input_sample_rate(Self) -> Int32
 pub fn DashScopeProvider::new(ProviderConfig) -> Self
 pub fn DashScopeProvider::output_sample_rate(Self) -> Int32
+pub fn DashScopeProvider::profile(Self) -> ModelProfile
 pub fn DashScopeProvider::session_update(Self, String, turn_detection? : String, tools? : Json) -> Json
+pub fn DashScopeProvider::voice(Self) -> String
 
 pub struct DashScopeSession {
   ws : @websocket.Conn
@@ -81,6 +87,13 @@ pub fn DashScopeSession::output_sample_rate(Self) -> Int32
 pub async fn DashScopeSession::send_audio(Self, String) -> Unit raise ProviderError
 pub async fn DashScopeSession::send_text(Self, String) -> Unit raise ProviderError
 pub impl @ports.RealtimeProvider for DashScopeSession
+
+pub(all) struct ModelProfile {
+  model : String
+  voice : String?
+  turn_detection : String
+  supports_tools : Bool
+} derive(Eq, @debug.Debug)
 
 pub(all) struct ProviderConfig {
   api_key : String

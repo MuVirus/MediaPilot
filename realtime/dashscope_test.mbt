@@ -26,6 +26,109 @@ test "audio contract is 16 kHz in and 24 kHz out" {
 }
 
 ///|
+test "known models resolve to their family defaults" {
+  let plus = @realtime.resolve_model_profile("qwen-audio-3.1-realtime-plus")
+  assert_eq(plus.voice, Some("longanqian_v3.1"))
+  assert_eq(plus.turn_detection, "smart_turn_v2")
+  assert_true(plus.supports_tools)
+
+  let omni = @realtime.resolve_model_profile("qwen3.5-omni-flash-realtime")
+  assert_eq(omni.voice, Some("Ethan"))
+  assert_eq(omni.turn_detection, "semantic_vad")
+  assert_true(omni.supports_tools)
+
+  let audio30 = @realtime.resolve_model_profile("qwen-audio-3.0-realtime-flash")
+  assert_eq(audio30.voice, Some("longanqian"))
+  assert_eq(audio30.turn_detection, "smart_turn")
+  assert_true(audio30.supports_tools)
+}
+
+///|
+test "the broken 3.1 flash model is marked as tool-less" {
+  let profile = @realtime.resolve_model_profile("qwen-audio-3.1-realtime-flash")
+  assert_false(profile.supports_tools)
+}
+
+///|
+test "unknown models fall back to the conservative profile" {
+  let profile = @realtime.resolve_model_profile("some-future-model")
+  assert_eq(profile.voice, None)
+  assert_eq(profile.turn_detection, @realtime.dashscope_default_turn_detection)
+  assert_false(profile.supports_tools)
+}
+
+///|
+test "session update uses the profile turn detection" {
+  let provider = @realtime.DashScopeProvider::new(@realtime.ProviderConfig::{
+    api_key: "k",
+    model: "qwen3.5-omni-flash-realtime",
+    endpoint: @realtime.dashscope_default_endpoint,
+    voice: "",
+  })
+  let parsed = @json.parse(provider.session_update("be brief").stringify())
+  let session = match parsed {
+    Json::Object(root) =>
+      match root.get("session") {
+        Some(Json::Object(session)) => session
+        _ => panic()
+      }
+    _ => panic()
+  }
+  assert_eq(
+    session.get("turn_detection"),
+    Some(Json::object({ "type": Json::string("semantic_vad") })),
+  )
+  // An empty configured voice falls back to the model default.
+  assert_eq(session.get("voice"), Some(Json::string("Ethan")))
+}
+
+///|
+test "tools are dropped for models that cannot handle them" {
+  let provider = @realtime.DashScopeProvider::new(@realtime.ProviderConfig::{
+    api_key: "k",
+    model: "qwen-audio-3.1-realtime-flash",
+    endpoint: @realtime.dashscope_default_endpoint,
+    voice: "",
+  })
+  let tools = Json::array([@realtime.function_tool("t", "d", Json::object({}))])
+  let parsed = @json.parse(
+    provider.session_update("be brief", tools~).stringify(),
+  )
+  let session = match parsed {
+    Json::Object(root) =>
+      match root.get("session") {
+        Some(Json::Object(session)) => session
+        _ => panic()
+      }
+    _ => panic()
+  }
+  assert_eq(session.get("tools"), None)
+}
+
+///|
+test "tools are kept for models that support them" {
+  let provider = @realtime.DashScopeProvider::new(@realtime.ProviderConfig::{
+    api_key: "k",
+    model: "qwen-audio-3.1-realtime-plus",
+    endpoint: @realtime.dashscope_default_endpoint,
+    voice: "",
+  })
+  let tools = Json::array([@realtime.function_tool("t", "d", Json::object({}))])
+  let parsed = @json.parse(
+    provider.session_update("be brief", tools~).stringify(),
+  )
+  let session = match parsed {
+    Json::Object(root) =>
+      match root.get("session") {
+        Some(Json::Object(session)) => session
+        _ => panic()
+      }
+    _ => panic()
+  }
+  assert_true(session.get("tools") is Some(_))
+}
+
+///|
 test "connect url keeps an existing query" {
   let provider = @realtime.DashScopeProvider::new(@realtime.ProviderConfig::{
     api_key: "k",

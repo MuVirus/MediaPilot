@@ -10,7 +10,10 @@
 ## 模型能力
 
 官方文档说 Qwen-Audio-Realtime 和 Qwen-Omni-Realtime 两个系列都支持工具调用，
-实测基本成立，但**有一个模型例外**，而且 `turn_detection` 必须按系列选：
+实测基本成立，但**有一个模型例外**，而且 `turn_detection` 必须按系列选。
+
+项目默认模型是 `qwen-audio-3.1-realtime-plus`（`realtime/dashscope_default_model`），
+与参考项目一致。
 
 | 模型 | function calling | `turn_detection` | 默认 voice |
 | --- | --- | --- | --- |
@@ -21,6 +24,10 @@
 | `qwen3.5-omni-flash-realtime` | 是 | `semantic_vad` | `Ethan` |
 | `qwen3.5-omni-plus-realtime` | 是 | `semantic_vad` | `Ethan` |
 | `qwen3.8-omni-flash-realtime` | 是 | `semantic_vad` | `Tina` |
+
+这张表在代码里是 `realtime/dashscope.mbt` 的 `resolve_model_profile`，由
+`realtime/dashscope_test.mbt` 锁定。未知模型走保守默认：不发 `tools`，
+`turn_detection` 用 `smart_turn_v2`。
 
 参考项目 `qwen-audio-agent` 的模型目录只有 `qwen-audio-3.1-realtime-plus`、
 `qwen-audio-3.0-realtime-plus`、`qwen-audio-3.0-realtime-flash` 三个 Audio 模型，
@@ -77,10 +84,13 @@ Authorization: Bearer <DASHSCOPE_API_KEY>
 ```
 
 - 成功返回 `session.updated`；字段不合法返回 `error`，`code = "invalid_value"`。
-- `voice` 必须在该模型支持的列表内。`qwen-audio-3.1-realtime-flash` 不接受 `Cherry`，
+- `voice` 必须在该模型支持的列表内。`qwen-audio-3.1-realtime-plus` 不接受 `Cherry`，
   默认用 `longanqian_v3.1`。错误信息会列出全部合法值，这是排查 voice 问题的最快路径。
-- `turn_detection` 用 `smart_turn_v2`。Qwen Audio 3.x 由服务端判定轮次，
-  客户端不需要发 `input_audio_buffer.commit`。
+- `turn_detection` 由模型族决定：Audio 3.1 用 `smart_turn_v2`，Audio 3.0 用
+  `smart_turn`，omni 用 `semantic_vad`。服务端判定轮次，客户端不需要发
+  `input_audio_buffer.commit`。
+- `tools` 只在模型支持时发送。`realtime/` 的 `ModelProfile` 负责这个判断，
+  未知模型默认不发。
 
 ## 音频格式
 
