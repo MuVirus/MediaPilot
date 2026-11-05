@@ -66,16 +66,27 @@ pub fn DashScopeProvider::session_update(
   self : DashScopeProvider,
   instructions : String,
   turn_detection? : String,
+  tools? : Json,
 ) -> Json {
   let detection = match turn_detection {
     Some(kind) => kind
     None => dashscope_default_turn_detection
   }
-  encode_session_update(
-    self.config.voice,
-    instructions,
-    turn_detection=detection,
-  )
+  match tools {
+    Some(value) =>
+      encode_session_update(
+        self.config.voice,
+        instructions,
+        turn_detection=detection,
+        tools=value,
+      )
+    None =>
+      encode_session_update(
+        self.config.voice,
+        instructions,
+        turn_detection=detection,
+      )
+  }
 }
 
 ///|
@@ -110,10 +121,14 @@ pub fn encode_text_message(text : String) -> Json {
 /// auth failures from VAD configuration. Production sessions set it to the
 /// provider-appropriate value (`smart_turn_v2` for the Qwen Audio 3.1 family)
 /// so the server creates responses automatically.
+///
+/// `tools` is the OpenAI-style function list. Passing it is what turns the
+/// realtime model into a coordinator that can delegate work.
 pub fn encode_session_update(
   voice : String,
   instructions : String,
   turn_detection? : String,
+  tools? : Json,
 ) -> Json {
   let session : Map[String, Json] = {
     "modalities": Json::array([Json::string("text"), Json::string("audio")]),
@@ -130,9 +145,46 @@ pub fn encode_session_update(
       )
     None => ()
   }
+  match tools {
+    Some(value) => session.set("tools", value)
+    None => ()
+  }
   Json::object({
     "type": Json::string("session.update"),
     "session": Json::object(session),
+  })
+}
+
+///|
+/// One OpenAI-style function definition.
+pub fn function_tool(
+  name : String,
+  description : String,
+  parameters : Json,
+) -> Json {
+  Json::object({
+    "type": Json::string("function"),
+    "function": Json::object({
+      "name": Json::string(name),
+      "description": Json::string(description),
+      "parameters": parameters,
+    }),
+  })
+}
+
+///|
+/// Inject a tool result back into the conversation.
+///
+/// `output` is a string, not an object: the provider expects the JSON-encoded
+/// result as the `output` field.
+pub fn encode_function_output(call_id : String, output : String) -> Json {
+  Json::object({
+    "type": Json::string("conversation.item.create"),
+    "item": Json::object({
+      "type": Json::string("function_call_output"),
+      "call_id": Json::string(call_id),
+      "output": Json::string(output),
+    }),
   })
 }
 
@@ -276,6 +328,16 @@ fn normalize_object(
       )
     "input_audio_buffer.speech_started" => Ok(Some(Interrupted))
     "response.created" => Ok(Some(ResponseStarted))
+    "response.function_call_arguments.done" =>
+      Ok(
+        Some(
+          FunctionCall(
+            call_id=optional_string(map, "call_id"),
+            name=optional_string(map, "name"),
+            arguments=optional_string(map, "arguments"),
+          ),
+        ),
+      )
     "response.done" => Ok(Some(TurnComplete))
     "error" => Ok(Some(error_event(map)))
     _ => Ok(None)

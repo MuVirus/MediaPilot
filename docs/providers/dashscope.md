@@ -2,9 +2,31 @@
 
 本页只回答一个问题：DashScope Realtime 的 wire 行为是什么，以及 `realtime/` 如何映射它。
 
-验证环境：MoonBit `0.1.20261029`，Windows，模型 `qwen-audio-3.1-realtime-flash`，
-端点 `wss://dashscope.aliyuncs.com/api-ws/v1/realtime`。验证程序是
-`cmd/dashscope-smoke`，它只打印事件类型和转写文本，不打印 key 和音频内容。
+验证环境：MoonBit `0.1.20261029`，Windows，端点
+`wss://dashscope.aliyuncs.com/api-ws/v1/realtime`。验证程序是
+`cmd/dashscope-smoke`（音频往返）和 `cmd/dashscope-tools-probe`（function calling），
+它们只打印事件类型、工具参数和转写文本，不打印 key 和音频内容。
+
+## 模型能力
+
+不同模型族的差异不只是名字，`tools` 和 `turn_detection` 都必须按模型选：
+
+| 模型 | function calling | `turn_detection` | 默认 voice |
+| --- | --- | --- | --- |
+| `qwen-audio-3.1-realtime-flash` | 否 | `smart_turn_v2` | `longanqian_v3.1` |
+| `qwen3.5-omni-flash-realtime` | 是 | `semantic_vad` | `Ethan` |
+| `qwen3.8-omni-flash-realtime` | 是 | `semantic_vad` | `Tina` |
+
+两个坑，都是实测出来的：
+
+1. **`qwen-audio-3.1-realtime-flash` 带 `tools` 会静默失败。** `session.update` 返回
+   `session.updated`，看起来接受了，但之后每次生成都以
+   `response.done.status = "failed"` 结束，`reason` 是
+   `An internal error occurred while generating the response.`，音频和转写都是空的。
+   连"你好"这种不会触发工具的问题也一样。所以这个模型**不能**用于方案 A。
+2. **omni 模型用 `smart_turn_v2` 时音频轮次不会提交。** 用户转写 delta 会到，
+   但没有 `speech_stopped` / `committed`，也就没有回复。换成 `semantic_vad` 后
+   完整轮次正常。
 
 ## 连接
 
@@ -93,12 +115,58 @@ response.done
 | `conversation.item.input_audio_transcription.delta`, `.text` | `TranscriptPartial(role="user")` |
 | `conversation.item.input_audio_transcription.completed` | `TranscriptFinal(role="user")` |
 | `input_audio_buffer.speech_started` | `Interrupted` |
+| `response.created` | `ResponseStarted`（仅用于跟踪是否有活动回复） |
+| `response.function_call_arguments.done` | `FunctionCall(call_id, name, arguments)` |
 | `response.done` | `TurnComplete` |
 | `error` | `Error`（鉴权类不可重试） |
 | 其他 | `None`，调用方忽略 |
 
 `input_audio_buffer.speech_stopped`、`input_audio_buffer.committed`、
 `conversation.item.created`、`response.audio.done` 等只用于观测，不产生北向事件。
+
+## Function calling
+
+工具定义用 OpenAI 风格：
+
+```json
+{
+  "type": "function",
+  "function": {
+    "name": "get_current_time",
+    "description": "...",
+    "parameters": { "type": "object", "properties": {}, "additionalProperties": false }
+  }
+}
+```
+
+调用流程（`qwen3.5-omni-flash-realtime` 实测）：
+
+```text
+response.created
+response.output_item.added
+response.function_call_arguments.done   name=get_current_time call_id=call_... arguments={}
+response.output_item.done
+response.done
+```
+
+注意 `response.done` 在工具调用后**立即**到达，此时 `status` 是 `completed`，
+没有音频。工具结果必须用 `conversation.item.create` 注入：
+
+```json
+{
+  "type": "conversation.item.create",
+  "item": {
+    "type": "function_call_output",
+    "call_id": "call_...",
+    "output": "{\"status\":\"ok\",...}"
+  }
+}
+```
+
+然后发 `response.create`，模型才会把结果说出来。`output` 是**字符串**，不是对象。
+
+`qwen3.8-omni-flash-realtime` 还会额外发 `response.function_call_arguments.delta`，
+但 `arguments` 在 `.done` 里才是完整的。
 
 ## 打断
 

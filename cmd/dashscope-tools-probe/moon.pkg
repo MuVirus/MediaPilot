@@ -1,0 +1,18 @@
+import {
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/http",
+  "moonbitlang/core/async/websocket",
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
+  "MuVirus/MediaPilot/realtime",
+}
+
+pkgtype(kind: "executable")
+
+options(
+  "allow-experimental-packages": [
+    "moonbitlang/core/async",
+    "moonbitlang/core/async/http",
+    "moonbitlang/core/async/websocket",
+  ],
+)

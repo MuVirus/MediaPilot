@@ -12,6 +12,9 @@ pub(all) enum ProviderEvent {
   TranscriptFinal(role~ : String, text~ : String)
   Interrupted
   TurnComplete
+  /// The model asked to call a tool. `arguments` is the raw JSON string the
+  /// provider produced; the caller parses it.
+  FunctionCall(call_id~ : String, name~ : String, arguments~ : String)
   Error(code~ : @protocol.ErrorCode, message~ : String, retryable~ : Bool)
 } derive(Eq, Debug)
 

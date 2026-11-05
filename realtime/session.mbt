@@ -49,6 +49,9 @@ pub fn to_server_event(
         ),
       )
     TurnComplete => None
+    // Tool calls are routed by the gateway in P2; until then they are dropped
+    // rather than leaked to clients as unknown events.
+    FunctionCall(..) => None
     Error(code~, message~, retryable~) =>
       Some(@protocol.ServerEvent::Error(code~, message~, retryable~))
   }

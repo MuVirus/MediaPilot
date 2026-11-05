@@ -23,13 +23,17 @@ pub fn encode_audio_clear() -> Json
 
 pub fn encode_audio_commit() -> Json
 
+pub fn encode_function_output(String, String) -> Json
+
 pub fn encode_response_cancel() -> Json
 
 pub fn encode_response_create() -> Json
 
-pub fn encode_session_update(String, String, turn_detection? : String) -> Json
+pub fn encode_session_update(String, String, turn_detection? : String, tools? : Json) -> Json
 
 pub fn encode_text_message(String) -> Json
+
+pub fn function_tool(String, String, Json) -> Json
 
 pub fn normalize_event(Json) -> Result[ProviderEvent?, ProviderError]
 
@@ -58,7 +62,7 @@ pub fn DashScopeProvider::connect_url(Self) -> String
 pub fn DashScopeProvider::input_sample_rate(Self) -> Int32
 pub fn DashScopeProvider::new(ProviderConfig) -> Self
 pub fn DashScopeProvider::output_sample_rate(Self) -> Int32
-pub fn DashScopeProvider::session_update(Self, String, turn_detection? : String) -> Json
+pub fn DashScopeProvider::session_update(Self, String, turn_detection? : String, tools? : Json) -> Json
 
 pub struct DashScopeSession {
   ws : @websocket.Conn
@@ -92,6 +96,7 @@ pub(all) enum ProviderEvent {
   TranscriptFinal(role~ : String, text~ : String)
   Interrupted
   TurnComplete
+  FunctionCall(call_id~ : String, name~ : String, arguments~ : String)
   Error(code~ : @protocol.ErrorCode, message~ : String, retryable~ : Bool)
 } derive(Eq, @debug.Debug)
 
