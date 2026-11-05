@@ -16,11 +16,20 @@
 | --- | --- | --- | --- |
 | `qwen-audio-3.1-realtime-plus` | 是（文本 + 语音均验证） | `smart_turn_v2` | `longanqian_v3.1` |
 | `qwen-audio-3.1-realtime-flash` | **否**（见下） | `smart_turn_v2` | `longanqian_v3.1` |
-| `qwen-audio-3.0-realtime-plus` | 是 | `smart_turn_v2` | `longanqian` |
-| `qwen-audio-3.0-realtime-flash` | 是 | `smart_turn_v2` | `longanqian` |
+| `qwen-audio-3.0-realtime-plus` | 是 | `smart_turn` | `longanqian` |
+| `qwen-audio-3.0-realtime-flash` | 是 | `smart_turn` | `longanqian` |
 | `qwen3.5-omni-flash-realtime` | 是 | `semantic_vad` | `Ethan` |
 | `qwen3.5-omni-plus-realtime` | 是 | `semantic_vad` | `Ethan` |
 | `qwen3.8-omni-flash-realtime` | 是 | `semantic_vad` | `Tina` |
+
+参考项目 `qwen-audio-agent` 的模型目录只有 `qwen-audio-3.1-realtime-plus`、
+`qwen-audio-3.0-realtime-plus`、`qwen-audio-3.0-realtime-flash` 三个 Audio 模型，
+**从未包含 `qwen-audio-3.1-realtime-flash`**。它的文档还明确写这三个都支持
+Function Calling。这和下面的实测结果一致。
+
+`turn_detection` 的取值参考项目按系列区分：3.1 Plus 用 `smart_turn_v2`，
+3.0 Plus / Flash 用 `smart_turn`。实测 3.0-flash 在两种取值下音频轮次都能正常提交，
+所以这是偏好而不是硬性要求；但按系列选更稳妥。
 
 两个坑，都是实测出来的：
 
