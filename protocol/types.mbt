@@ -3,7 +3,7 @@
 ///
 /// Additive changes bump the minor; any breaking change to a client-visible
 /// event or field bumps the major. See `docs/contract.md`.
-pub let protocol_version : String = "0.1.0"
+pub let protocol_version : String = "0.2.0"
 
 ///|
 /// Capability IDs are the only stable feature check for clients.
@@ -22,10 +22,15 @@ pub let capability_text_in : String = "realtime.text-in"
 pub let capability_interrupt : String = "realtime.interrupt"
 
 ///|
+/// The gateway can tell the client to stop playing buffered audio, for example
+/// when server-side VAD detects that the user started speaking.
+pub let capability_playback_clear : String = "realtime.playback-clear"
+
+///|
 pub fn all_capabilities() -> Array[String] {
   [
     capability_session, capability_audio_in, capability_audio_out, capability_text_in,
-    capability_interrupt,
+    capability_interrupt, capability_playback_clear,
   ]
 }
 
@@ -121,6 +126,9 @@ pub(all) enum ServerEvent {
     sample_rate~ : Int32,
     channels~ : Int32
   )
+  /// Stop playing buffered audio. `reason` is a stable token such as
+  /// `user_interruption`; clients must not branch on free-form text.
+  PlaybackClear(session_id~ : String, reason~ : String)
   Error(code~ : ErrorCode, message~ : String, retryable~ : Bool)
 } derive(Eq, Debug)
 

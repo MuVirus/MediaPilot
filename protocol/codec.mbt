@@ -231,6 +231,12 @@ pub fn encode_server_event(event : ServerEvent) -> Json {
         ("sampleRate", Json::number(sample_rate.to_double())),
         ("channels", Json::number(channels.to_double())),
       ])
+    PlaybackClear(session_id~, reason~) =>
+      make_object([
+        ("type", Json::string("playback.clear")),
+        ("sessionId", Json::string(session_id)),
+        ("reason", Json::string(reason)),
+      ])
     Error(code~, message~, retryable~) =>
       make_object([
         ("type", Json::string("error")),
@@ -290,6 +296,13 @@ fn decode_server_event_raise(
         ),
       )
     }
+    "playback.clear" =>
+      Some(
+        PlaybackClear(
+          session_id=string_field(map, "sessionId"),
+          reason=string_field(map, "reason"),
+        ),
+      )
     "error" =>
       Some(
         Error(

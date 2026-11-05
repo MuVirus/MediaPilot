@@ -77,6 +77,18 @@ test "server audio delta round trip" {
 }
 
 ///|
+test "playback clear round trip" {
+  let event = @protocol.ServerEvent::PlaybackClear(
+    session_id="s-1",
+    reason="user_interruption",
+  )
+  let decoded = @protocol.decode_server_event(
+    @protocol.encode_server_event_string(event),
+  ).unwrap()
+  assert_eq(decoded, Some(event))
+}
+
+///|
 test "unknown error codes are preserved" {
   let event = @protocol.ServerEvent::Error(
     code=@protocol.ErrorCode::Unknown("future_error"),

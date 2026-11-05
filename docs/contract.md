@@ -4,7 +4,7 @@
 未列出的内容——内部模块路径、数据库结构、配置目录里的文件、日志格式——都不是契约，
 可以随时改变。
 
-状态：`v0.1.0`，P0 草案。P0 的音频 spike 可能调整音频字段；调整时必须升版本并更新此表。
+状态：`v0.2.0`，P0 草案。P0 的音频 spike 可能调整音频字段；调整时必须升版本并更新此表。
 
 范围：当前契约只覆盖实时音频。视频复用同一会话与事件模型，P4 才进入契约。
 
@@ -17,7 +17,7 @@
 
 ```json
 {
-  "protocolVersion": "0.1.0",
+  "protocolVersion": "0.2.0",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"]
 }
 ```
@@ -33,6 +33,7 @@
 | `realtime.audio-out` | 服务端推送 PCM16 单声道 24 kHz 音频 | `pending: P1` |
 | `realtime.text-in` | 客户端可发送文本输入 | `pending: P1` |
 | `realtime.interrupt` | 客户端可打断当前回复并清空播放 | `pending: P1` |
+| `realtime.playback-clear` | 服务端可要求客户端停止播放已缓冲音频 | `protocol/codec_test.mbt` |
 
 事件的 JSON 形状由 `protocol/codec_test.mbt` 锁定；上表中的能力在传输层实现前仍为 `pending`。
 
@@ -99,11 +100,15 @@
 | `transcript.partial` | `role`, `text` | 增量转写 |
 | `transcript.final` | `role`, `text` | 一段话的最终转写 |
 | `audio.delta` | `data`, `format`, `sampleRate`, `channels` | 一段可播放音频 |
+| `playback.clear` | `reason` | 立即停止播放并丢弃已缓冲音频 |
 | `task.updated` | `task` | 任务状态或产物更新（P2） |
 | `error` | `code`, `message`, `retryable` | 可恢复或不可恢复错误 |
 
 所有服务端事件都带 `type`；除 `error` 外都带 `sessionId`。事件不保证跨会话有序，
 同一会话内按发送顺序处理。
+
+`playback.clear` 的 `reason` 是稳定 token，当前只有 `user_interruption`：
+服务端 VAD 检测到用户开始说话。客户端必须丢弃本地待播放缓冲，不能只暂停。
 
 ## 音频约定
 

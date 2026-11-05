@@ -14,6 +14,8 @@ pub let capability_audio_out : String
 
 pub let capability_interrupt : String
 
+pub let capability_playback_clear : String
+
 pub let capability_session : String
 
 pub let capability_text_in : String
@@ -71,6 +73,7 @@ pub(all) enum ServerEvent {
   TranscriptPartial(session_id~ : String, role~ : String, text~ : String)
   TranscriptFinal(session_id~ : String, role~ : String, text~ : String)
   AudioDelta(session_id~ : String, data~ : String, format~ : String, sample_rate~ : Int32, channels~ : Int32)
+  PlaybackClear(session_id~ : String, reason~ : String)
   Error(code~ : ErrorCode, message~ : String, retryable~ : Bool)
 } derive(Eq, @debug.Debug)
 
