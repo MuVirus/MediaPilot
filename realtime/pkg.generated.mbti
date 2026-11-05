@@ -4,6 +4,7 @@ package "MuVirus/MediaPilot/realtime"
 import {
   "MuVirus/MediaPilot/ports",
   "MuVirus/MediaPilot/protocol",
+  "moonbitlang/core/async",
   "moonbitlang/core/async/websocket",
   "moonbitlang/core/debug",
 }
@@ -30,6 +31,8 @@ pub fn encode_function_output(String, String) -> Json
 pub fn encode_response_cancel() -> Json
 
 pub fn encode_response_create() -> Json
+
+pub fn encode_response_create_with_instructions(String) -> Json
 
 pub fn encode_session_update(String, String, turn_detection? : String, tools? : Json) -> Json
 
@@ -81,6 +84,7 @@ pub struct DashScopeSession {
   mut response_active : Bool
   mut user_partial : String
   mut assistant_partial : String
+  send_lock : @async.Mutex
 }
 pub async fn DashScopeSession::close(Self) -> Unit
 pub fn DashScopeSession::input_sample_rate(Self) -> Int32
@@ -89,6 +93,7 @@ pub async fn DashScopeSession::next_event(Self) -> @ports.RealtimeEvent?
 pub async fn DashScopeSession::open(ProviderConfig, String, String, tools? : Json) -> Self raise ProviderError
 pub fn DashScopeSession::output_sample_rate(Self) -> Int32
 pub async fn DashScopeSession::send_audio(Self, String) -> Unit raise ProviderError
+pub async fn DashScopeSession::send_background_result(Self, String) -> Unit raise ProviderError
 pub async fn DashScopeSession::send_text(Self, String) -> Unit raise ProviderError
 pub async fn DashScopeSession::send_tool_result(Self, String, String, Bool) -> Unit raise ProviderError
 pub impl @ports.RealtimeProvider for DashScopeSession

@@ -4,7 +4,7 @@
 未列出的内容——内部模块路径、数据库结构、配置目录里的文件、日志格式——都不是契约，
 可以随时改变。
 
-状态：`v0.5.0`，P2 进行中。之后的协议变更必须升版本并更新此表。
+状态：`v0.6.0`，P2 进行中。之后的协议变更必须升版本并更新此表。
 
 范围：当前契约只覆盖实时音频。视频复用同一会话与事件模型，P4 才进入契约。
 
@@ -17,7 +17,7 @@
 
 ```json
 {
-  "protocolVersion": "0.5.0",
+  "protocolVersion": "0.6.0",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"]
 }
 ```
@@ -66,7 +66,7 @@
 {
   "type": "session.hello",
   "requestId": "c-1",
-  "protocolVersion": "0.5.0",
+  "protocolVersion": "0.6.0",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"]
 }
 ```
@@ -78,7 +78,7 @@
   "type": "session.ready",
   "requestId": "c-1",
   "sessionId": "s-1",
-  "protocolVersion": "0.5.0",
+  "protocolVersion": "0.6.0",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"]
 }
 ```
@@ -146,8 +146,13 @@
 后端提供 `step` 时，`text` 仍然只表示回答正文，两者不能混用。
 
 同一个 `taskId` 会先收到若干 `running`，再收到一个终态。客户端应在 `running` 时
-显示进度，但不能把增量 `text` 当作最终答案。`task.updated` 只是进度展示；
-最终答案由同一轮次的 `audio.delta` / `transcript.final` 给出。
+显示进度，但不能把增量 `text` 当作最终答案。`task.updated` 只是进度展示。
+
+`delegate_task` 受理后，网关立即让实时模型回一句简短的受理确认；任务完成后，
+网关再以一个新的语音轮次播报结果。因此最终答案通常出现在
+`task.updated(status=completed)` 之后的 `audio.delta` / `transcript.final` 中，
+而不是受理那一轮。任务失败时同样会有一个语音轮次说明原因；用户打断导致
+`cancelled` 时不再播报。客户端不能假设受理确认和最终结果是同一个回复。
 
 ## 权限请求
 

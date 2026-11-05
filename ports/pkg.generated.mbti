@@ -62,6 +62,7 @@ pub(open) trait RealtimeProvider {
   async fn close(Self) -> Unit
   async fn next_event(Self) -> RealtimeEvent?
   async fn send_tool_result(Self, String, String, Bool) -> Unit
+  async fn send_background_result(Self, String) -> Unit
   fn input_sample_rate(Self) -> Int32
   fn output_sample_rate(Self) -> Int32
 }

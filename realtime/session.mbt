@@ -18,7 +18,22 @@ pub struct DashScopeSession {
   mut user_partial : String
   /// Cumulative assistant transcript for the current response.
   mut assistant_partial : String
+  /// Serializes frame writes. Client audio, tool receipts, and background
+  /// results are sent from different tasks of one session.
+  send_lock : @async.Mutex
 }
+
+///|
+/// How long a background result waits for the current response to finish
+/// before sending anyway. A response that never ends must not strand the
+/// result forever.
+let background_result_wait_ms : Int32 = 20000
+
+///|
+/// Response instructions for a background result. Mirrors the reference
+/// project's `resultResponseInstructions`: the item is material, not a new
+/// user request, and the model must not start another tool loop.
+let background_result_instructions : String = "这是先前提交工作的最终结果，不是用户的新请求。把结果当作事实材料，结合当前对话自然回应；开头直接说实际结果、关键发现、阻塞或必要问题，不用“好的、收到、任务完成了”等空泛承接语。屏幕上已经展示详细结果时，只说重点和查看方向，不要逐字朗读。不要朗读协议前缀、字段、执行 ID、路径、URL 或不适合口语的长内容。不要调用工具，不要添加结果中没有的事实，也不要把未完成说成完成。"
 
 ///|
 /// Merge a provider transcript fragment into the running partial for a role.
@@ -89,6 +104,20 @@ async fn send_frame(
   ws.send_text(frame) catch {
     error => raise ConnectFailed(error.to_string())
   }
+}
+
+///|
+/// Serialize one frame write for this session.
+///
+/// WebSocket frames are atomic, but unrelated tasks must not interleave a
+/// multi-frame sequence such as `conversation.item.create` + `response.create`.
+async fn DashScopeSession::write(
+  self : DashScopeSession,
+  frame : String,
+) -> Unit raise ProviderError {
+  self.send_lock.acquire()
+  defer self.send_lock.release()
+  send_frame(self.ws, frame)
 }
 
 ///|
@@ -235,6 +264,7 @@ pub async fn DashScopeSession::open(
     response_active: false,
     user_partial: "",
     assistant_partial: "",
+    send_lock: @async.Mutex(),
   }
   // The provider sends `session.created` before it accepts any command.
   let _ = session.recv_event(10000) catch {
@@ -281,7 +311,7 @@ pub async fn DashScopeSession::send_audio(
   self : DashScopeSession,
   data : String,
 ) -> Unit raise ProviderError {
-  send_frame(self.ws, encode_audio_append(data).stringify())
+  self.write(encode_audio_append(data).stringify())
 }
 
 ///|
@@ -289,8 +319,31 @@ pub async fn DashScopeSession::send_text(
   self : DashScopeSession,
   text : String,
 ) -> Unit raise ProviderError {
-  send_frame(self.ws, encode_text_message(text).stringify())
-  send_frame(self.ws, encode_response_create().stringify())
+  self.write(encode_text_message(text).stringify())
+  self.write(encode_response_create().stringify())
+  self.response_active = true
+}
+
+///|
+/// Inject a background result as a user-role note and start a new response.
+///
+/// The result may arrive while the acceptance reply is still streaming, so
+/// wait for the current response to finish first. The response explicitly
+/// disables tools: the model should narrate the result, not delegate again.
+pub async fn DashScopeSession::send_background_result(
+  self : DashScopeSession,
+  text : String,
+) -> Unit raise ProviderError {
+  let mut waited : Int32 = 0
+  while self.response_active && waited < background_result_wait_ms {
+    @async.sleep(100)
+    waited = waited + 100
+  }
+  self.write(encode_text_message("[后台任务结果]\n" + text).stringify())
+  self.write(
+    encode_response_create_with_instructions(background_result_instructions).stringify(),
+  )
+  self.response_active = true
 }
 
 ///|
@@ -306,7 +359,7 @@ pub async fn DashScopeSession::interrupt(
 ) -> Unit raise ProviderError {
   if self.response_active {
     self.response_active = false
-    send_frame(self.ws, encode_response_cancel().stringify())
+    self.write(encode_response_cancel().stringify())
   }
 }
 
@@ -353,9 +406,10 @@ pub async fn DashScopeSession::send_tool_result(
   output : String,
   continue_turn : Bool,
 ) -> Unit raise ProviderError {
-  send_frame(self.ws, encode_function_output(call_id, output).stringify())
+  self.write(encode_function_output(call_id, output).stringify())
   if continue_turn {
-    send_frame(self.ws, encode_response_create().stringify())
+    self.write(encode_response_create().stringify())
+    self.response_active = true
   }
 }
 
@@ -414,6 +468,16 @@ pub impl @ports.RealtimeProvider for DashScopeSession with fn send_tool_result(
   continue_turn,
 ) {
   self.send_tool_result(call_id, output, continue_turn) catch {
+    _ => ()
+  }
+}
+
+///|
+pub impl @ports.RealtimeProvider for DashScopeSession with fn send_background_result(
+  self,
+  text,
+) {
+  self.send_background_result(text) catch {
     _ => ()
   }
 }

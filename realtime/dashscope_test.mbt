@@ -281,6 +281,30 @@ test "outgoing frames use the provider wire format" {
 }
 
 ///|
+test "background result responses disable tools" {
+  let encoded = @realtime.encode_response_create_with_instructions(
+    "播报结果",
+  )
+  let parsed = @json.parse(encoded.stringify())
+  match parsed {
+    Json::Object(root) => {
+      assert_eq(root.get("type"), Some(Json::string("response.create")))
+      match root.get("response") {
+        Some(Json::Object(response)) => {
+          assert_eq(
+            response.get("instructions"),
+            Some(Json::string("播报结果")),
+          )
+          assert_eq(response.get("tool_choice"), Some(Json::string("none")))
+        }
+        _ => panic()
+      }
+    }
+    _ => panic()
+  }
+}
+
+///|
 test "session update carries the audio contract" {
   let encoded = @realtime.encode_session_update("longanqian_v3.1", "be brief")
   let parsed = @json.parse(encoded.stringify())

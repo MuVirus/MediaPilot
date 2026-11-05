@@ -127,20 +127,23 @@ MediaPilot 的配置。MediaPilot 只在 agent 发来请求时询问用户。
 
 真实链路（`opencode acp` + DashScope Realtime + 浏览器客户端）：
 
-- 文本指令 → `delegate_task` → ACP `session/prompt` → `tool_call` 进度 →
-  `permission.request`（`execute`，描述 `echo panel-check`）→ 客户端批准 →
-  `permission.resolved` → 结果回注 → 语音播报。
+- 文本指令 → `delegate_task` → 立即受理回执（模型先说“正在处理”）→ ACP
+  `session/prompt` → `tool_call` 进度 → `permission.request`（`execute`，描述
+  `echo panel-check`）→ 客户端批准 → `permission.resolved` → 完成后另起一轮语音
+  播报结果。
 - `allow_session` 之后再出现权限请求时，网关直接按 policy 回答，客户端不再弹窗。
 - 打断长任务：`playback.clear` → `task.updated(status=cancelled)` → 不再播报；
   同一会话随后仍能正常回答新问题。
 - `deny`：agent 收到拒绝并以“用户拒绝”继续，模型向用户解释，不执行命令。
-- 首次委派时延（文本输入，`echo hi`）：预热前 9.9 秒到首段音频，预热并显式选模型后
-  4.6 秒。剩下的时间主要是 agent 自己的模型往返，不是网关或浏览器。
+- 首次委派时延：预热前 9.9 秒到首段音频；预热并显式选模型后，受理确认约 1.2 秒
+  开始播报，最终结果约 4.6 秒后到达（文本输入，`echo hi`）。剩下的时间主要是
+  agent 自己的模型往返，不是网关或浏览器。
 - 会话结束时子进程会被回收：先关 stdin 等 1.5 秒，不退出就 `taskkill` / `kill -9`。
 
 ## 已知限制
 
-- 同一会话同时只跑一个任务；第二个 `delegate_task` 会排队等待网关处理完第一个。
+- 同一会话同时只跑一个任务；第二个 `delegate_task` 会立即受理并排队，等前一个结束
+  后开始。打断只会取消当前正在执行的任务，排队中的任务按 generation 丢弃。
 - 不支持 `session/load`、`session/resume`、MCP server、终端能力、文件系统能力。
 - 不解析 agent 的模型/模式配置选项；使用 agent 自身的默认值。
 - 文本按 ACP 的 chunk 转发，可能一块包含多句，也可能一句分多块；客户端不能假设边界。
@@ -150,5 +153,5 @@ MediaPilot 的配置。MediaPilot 只在 agent 发来请求时询问用户。
 | 行为 | 锁定位置 |
 | --- | --- |
 | 行协议、`initialize` 参数、update 映射、权限请求解析、选项选择 | `backend/acp_wbtest.mbt` |
-| 权限请求 → 批准/拒绝/会话授权/超时降级、`send_tool_result` 的 `continue_turn` | `gateway/integration_test.mbt` |
+| 权限请求 → 批准/拒绝/会话授权/超时降级、受理回执与后台结果播报、`send_tool_result` 的 `continue_turn` | `gateway/integration_test.mbt` |
 | `permission.request` / `permission.resolved` 的 JSON 形状 | `protocol/codec_test.mbt` |

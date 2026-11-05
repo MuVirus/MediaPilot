@@ -208,6 +208,12 @@ response.done
 
 然后发 `response.create`，模型才会把结果说出来。`output` 是**字符串**，不是对象。
 
+后台任务的最终结果走另一条注入路径：`conversation.item.create`（普通 `message`，
+role 为 `user`）+ `response.create`。后者带 `response.instructions`，说明这是先前
+提交工作的结果、不是用户的新请求，并设置 `response.tool_choice = "none"`，避免模型
+把播报变成又一轮工具调用。一个会话只有一个 response slot，所以注入前必须等当前
+回复的 `response.done`；否则 `response.create` 会被拒绝。
+
 `qwen3.8-omni-flash-realtime` 和 `qwen-audio-3.1-realtime-plus` 还会额外发
 `response.function_call_arguments.delta`，但 `arguments` 在 `.done` 里才是完整的。
 

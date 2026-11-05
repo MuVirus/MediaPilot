@@ -357,13 +357,32 @@ struct SessionFlow {
   pending_permission : Ref[String]
   /// The delegated task id, or "" when idle. Used to cancel on interrupt.
   current_task : Ref[String]
-  /// Set when the client interrupts, so a late tool result does not speak.
-  interrupted : Ref[Bool]
+  /// Incremented on every client interrupt. A queued task captures the value
+  /// when it is accepted and is dropped if the generation moved on.
+  interrupt_generation : Ref[Int32]
   /// Set once the client allows everything for the rest of the session.
   session_allow : Ref[Bool]
   /// True when the client advertised `realtime.permission`, so the gateway may
   /// ask. A client that did not is denied by policy instead of waiting.
   can_ask : Bool
+}
+
+///|
+/// One accepted `delegate_task`, waiting for the serial task runner.
+struct TaskJob {
+  task_id : String
+  instruction : String
+  /// Value of `SessionFlow::interrupt_generation` at acceptance.
+  generation : Int32
+}
+
+///|
+/// How one delegated task ended. The runner turns this into either a spoken
+/// background result or silence.
+enum TaskOutcome {
+  Completed(text~ : String)
+  Failed(message~ : String)
+  Cancelled(text~ : String)
 }
 
 ///|
@@ -410,13 +429,15 @@ async fn bridge(
   // Set when the client closed on purpose, so an upstream shutdown is not
   // reported back as a retryable error.
   let client_closing : Ref[Bool] = Ref(false)
+  // Accepted tasks wait here so the provider reader never blocks on one.
+  let tool_jobs : @aqueue.Queue[TaskJob?] = @aqueue.Queue(kind=Blocking(4))
   let flow : SessionFlow = {
     outbound,
     session_id,
     answers: @aqueue.Queue(kind=Blocking(4)),
     pending_permission: Ref(""),
     current_task: Ref(""),
-    interrupted: Ref(false),
+    interrupt_generation: Ref(0),
     session_allow: Ref(false),
     can_ask: capabilities.contains(@protocol.capability_permission),
   }
@@ -433,7 +454,14 @@ async fn bridge(
       done.put(())
     }
     group.spawn_bg(no_wait=true) <| () => {
-      provider_pump(provider, flow, client_closing, backend)
+      provider_pump(provider, flow, client_closing, backend, tool_jobs)
+    }
+    match backend {
+      Some(backend) =>
+        group.spawn_bg(no_wait=true) <| () => {
+          tool_runner(provider, backend, flow, tool_jobs)
+        }
+      None => ()
     }
     group.spawn_bg(no_wait=true) <| () => {
       writer_pump(ws, outbound)
@@ -578,8 +606,8 @@ async fn client_pump(
         // Stop the delegated task too. The waiter gets a cancel answer so it
         // does not sit on the permission timeout.
         let task_id = flow.current_task.val
+        flow.interrupt_generation.val = flow.interrupt_generation.val + 1
         if task_id != "" {
-          flow.interrupted.val = true
           match backend {
             Some(backend) => backend.cancel(task_id)
             None => ()
@@ -621,11 +649,18 @@ async fn client_pump(
 }
 
 ///|
+/// Read upstream events and accept tool calls without waiting for the work.
+///
+/// A `delegate_task` is answered immediately with an acceptance receipt so the
+/// model can speak a short confirmation. The actual work runs in `tool_runner`
+/// and comes back later as a background result, which is why this loop must
+/// keep reading provider events.
 async fn provider_pump(
   provider : &@ports.RealtimeProvider,
   flow : SessionFlow,
   client_closing : Ref[Bool],
   backend : &@ports.BackendPort?,
+  tool_jobs : @aqueue.Queue[TaskJob?],
 ) -> Unit {
   let mut task_seq : Int32 = 0
   for ;; {
@@ -633,22 +668,48 @@ async fn provider_pump(
       Some(@ports.RealtimeEvent::Forward(event~)) =>
         flow.outbound.put(Some(event))
       Some(@ports.RealtimeEvent::ToolCall(call_id~, name~, arguments~)) => {
-        // A new turn starts here, so an earlier interrupt no longer applies.
-        flow.interrupted.val = false
-        let (output, continue_turn) = match backend {
-          Some(backend) => {
-            task_seq = task_seq + 1
-            handle_tool_call(backend, flow, task_seq, name, arguments)
+        if name != "delegate_task" {
+          provider.send_tool_result(
+            call_id,
+            tool_error("unknown tool: " + name),
+            true,
+          )
+          continue
+        }
+        let instruction = match tool_instruction(arguments) {
+          Some(text) => text
+          None => {
+            provider.send_tool_result(
+              call_id,
+              tool_error("delegate_task requires a non-empty instruction"),
+              true,
+            )
+            continue
           }
+        }
+        match backend {
           None =>
-            (
+            provider.send_tool_result(
+              call_id,
               tool_error(
                 "no backend is configured, so the task cannot be delegated",
               ),
               true,
             )
+          Some(_) => {
+            task_seq = task_seq + 1
+            let task_id = "t-" + task_seq.to_string()
+            flow.task_updated(task_id, "running", "", "")
+            tool_jobs.put(
+              Some({
+                task_id,
+                instruction,
+                generation: flow.interrupt_generation.val,
+              }),
+            )
+            provider.send_tool_result(call_id, tool_accepted(task_id), true)
+          }
         }
-        provider.send_tool_result(call_id, output, continue_turn)
       }
       None => {
         if !client_closing.val {
@@ -662,6 +723,7 @@ async fn provider_pump(
             ),
           )
         }
+        tool_jobs.put(None)
         flow.outbound.put(None)
         return
       }
@@ -673,6 +735,34 @@ async fn provider_pump(
 /// Build a JSON tool result for the model.
 fn tool_error(message : String) -> String {
   "{\"status\":\"error\",\"message\":" + Json::string(message).stringify() + "}"
+}
+
+///|
+/// Acceptance receipt for `delegate_task`.
+///
+/// The model gets this before any backend work starts, so its next response is
+/// a short natural confirmation rather than a claim that the task finished.
+fn tool_accepted(task_id : String) -> String {
+  Json::object({
+    "status": Json::string("accepted"),
+    "task_id": Json::string(task_id),
+    "message": Json::string(
+      "任务已受理并在后台执行。请用一句简短自然的口语告诉用户你正在处理，不要声称已经完成，也不要为同一请求再次调用 delegate_task。",
+    ),
+  }).stringify()
+}
+
+///|
+/// Ask the model to narrate a completed background result.
+fn background_result_text(text : String) -> String {
+  "任务已完成。\n\n结果：\n" + text
+}
+
+///|
+/// Ask the model to explain a failed background task honestly.
+fn background_failure_text(message : String) -> String {
+  "任务失败。请如实、简短地告诉用户失败原因，不要编造成功。\n\n原因：\n" +
+  message
 }
 
 ///|
@@ -817,37 +907,67 @@ async fn ask_permission(
 }
 
 ///|
-/// Run one delegated task and return the tool result plus whether the model
-/// should continue the turn.
+/// Consume accepted tasks one at a time.
+///
+/// The backend event queue is shared, so tasks are serialized. Keeping this in
+/// its own task lets `provider_pump` keep reading realtime events while the
+/// backend works, and lets the user speak or interrupt in the meantime.
+async fn tool_runner(
+  provider : &@ports.RealtimeProvider,
+  backend : &@ports.BackendPort,
+  flow : SessionFlow,
+  jobs : @aqueue.Queue[TaskJob?],
+) -> Unit {
+  for ;; {
+    match jobs.get() {
+      None => return
+      Some(job) => {
+        let outcome = handle_tool_call(
+          backend,
+          flow,
+          job.task_id,
+          job.instruction,
+          job.generation,
+        )
+        // An interrupt after the task ended must not produce a late
+        // announcement.
+        if flow.interrupt_generation.val != job.generation {
+          continue
+        }
+        match outcome {
+          Completed(text~) =>
+            provider.send_background_result(background_result_text(text))
+          Failed(message~) =>
+            provider.send_background_result(background_failure_text(message))
+          Cancelled(_) => ()
+        }
+      }
+    }
+  }
+}
+
+///|
+/// Run one accepted task and report how it ended.
 ///
 /// `submit` blocks until the task finishes, so it runs in a child task while
-/// this function drains the backend queue. That also gives the client live
-/// `task.updated` progress instead of one event at the end.
+/// this function drains the backend queue. That gives the client live
+/// `task.updated` progress without blocking the realtime reader.
 async fn handle_tool_call(
   backend : &@ports.BackendPort,
   flow : SessionFlow,
-  task_seq : Int32,
-  name : String,
-  arguments : String,
-) -> (String, Bool) {
-  if name != "delegate_task" {
-    return (tool_error("unknown tool: " + name), true)
+  task_id : String,
+  instruction : String,
+  generation : Int32,
+) -> TaskOutcome {
+  if flow.interrupt_generation.val != generation {
+    flow.task_updated(task_id, "cancelled", "", "")
+    return Cancelled(text="")
   }
-  let instruction = match tool_instruction(arguments) {
-    Some(text) => text
-    None =>
-      return (
-        tool_error("delegate_task requires a non-empty instruction"),
-        true,
-      )
-  }
-  let task_id = "t-" + task_seq.to_string()
   let mut task_allow = false
   let mut step = ""
   let mut text = ""
   let mut failure = ""
   flow.current_task.val = task_id
-  flow.task_updated(task_id, "running", "", "")
   @async.with_task_group() <| group => {
     group.spawn_bg(no_wait=true) <| () => {
       backend.submit(task_id, instruction)
@@ -919,20 +1039,19 @@ async fn handle_tool_call(
       }
     }
   }
-  flow.current_task.val = ""
-  let cancelled = flow.interrupted.val
-  if failure != "" {
-    flow.task_updated(task_id, "failed", failure, step)
-    (tool_error(failure), true)
-  } else if cancelled {
+  if flow.current_task.val == task_id {
+    flow.current_task.val = ""
+  }
+  let cancelled = flow.interrupt_generation.val != generation
+  if cancelled {
     flow.task_updated(task_id, "cancelled", text, step)
-    ("{\"status\":\"cancelled\"}", false)
+    Cancelled(text~)
+  } else if failure != "" {
+    flow.task_updated(task_id, "failed", failure, step)
+    Failed(message=failure)
   } else {
     flow.task_updated(task_id, "completed", text, step)
-    (
-      "{\"status\":\"ok\",\"answer\":" + Json::string(text).stringify() + "}",
-      true,
-    )
+    Completed(text~)
   }
 }
 

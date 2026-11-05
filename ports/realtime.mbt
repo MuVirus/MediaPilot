@@ -57,6 +57,14 @@ pub(open) trait RealtimeProvider {
     continue_turn : Bool,
   ) -> Unit
 
+  /// Inject the final result of a background task and ask the model to speak
+  /// it in a new turn.
+  ///
+  /// This is separate from `send_tool_result` because `delegate_task` answers
+  /// the tool call with an acceptance receipt immediately; the result arrives
+  /// later, after the model has already confirmed that work started.
+  async fn send_background_result(Self, text : String) -> Unit
+
   /// Sample rate the upstream expects for client audio.
   fn input_sample_rate(Self) -> Int32
 

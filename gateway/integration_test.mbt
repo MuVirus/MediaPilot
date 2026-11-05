@@ -7,6 +7,7 @@
 struct FakeProvider {
   sent_audio : Array[String]
   sent_text : Array[String]
+  background_results : Array[String]
   mut interrupted : Bool
   tool_results : Array[(String, String, Bool)]
   mut closed : Bool
@@ -18,6 +19,7 @@ fn FakeProvider::new() -> FakeProvider {
   {
     sent_audio: [],
     sent_text: [],
+    background_results: [],
     interrupted: false,
     tool_results: [],
     closed: false,
@@ -86,6 +88,14 @@ pub impl @ports.RealtimeProvider for FakeProvider with fn send_tool_result(
 }
 
 ///|
+pub impl @ports.RealtimeProvider for FakeProvider with fn send_background_result(
+  self,
+  text,
+) {
+  self.background_results.push(text)
+}
+
+///|
 pub impl @ports.RealtimeProvider for FakeProvider with fn input_sample_rate(
   _self,
 ) {
@@ -116,6 +126,9 @@ struct FakeBackend {
   answers : @aqueue.Queue[@ports.PermissionDecision]
   mut permission_asks : Int32
   mut warmed : Bool
+  /// When true, `submit` waits on `gate` before producing the answer.
+  mut hold : Bool
+  gate : @aqueue.Queue[Unit]
 }
 
 ///|
@@ -127,6 +140,8 @@ fn FakeBackend::new() -> FakeBackend {
     answers: @aqueue.Queue(kind=Blocking(4)),
     permission_asks: 0,
     warmed: false,
+    hold: false,
+    gate: @aqueue.Queue(kind=Blocking(1)),
   }
 }
 
@@ -177,6 +192,9 @@ pub impl @ports.BackendPort for FakeBackend with fn submit(
     }
   }
   let answer = "agent answer: " + instruction
+  if self.hold {
+    self.gate.get()
+  }
   self.events.put(Some(@ports.BackendEvent::TextDelta(text="agent ")))
   self.events.put(Some(@ports.BackendEvent::TextDelta(text="answer")))
   self.events.put(Some(@ports.BackendEvent::TextDone(text=answer)))
@@ -619,14 +637,69 @@ async test "delegate_task runs the backend and answers the tool call" {
     }
     assert_true(saw_running)
     assert_eq(completed_text, "agent answer: 查一下明天杭州的天气")
-    // The gateway must answer the model with the same text.
+    // The tool call is answered immediately with an acceptance receipt; the
+    // final answer arrives later as a background result.
     @async.sleep(120)
     assert_eq(backend.submitted, ["查一下明天杭州的天气"])
     assert_eq(provider.tool_results.length(), 1)
     let (call_id, output, continue_turn) = provider.tool_results[0]
     assert_true(continue_turn)
     assert_eq(call_id, "call-1")
-    assert_true(output.contains("agent answer"))
+    assert_true(output.contains("accepted"))
+    assert_true(!output.contains("agent answer"))
+    assert_eq(provider.background_results.length(), 1)
+    assert_true(provider.background_results[0].contains("agent answer"))
+  })
+}
+
+///|
+async test "the provider keeps reading events while a task runs" {
+  let provider = FakeProvider::new()
+  let backend = FakeBackend::new()
+  backend.hold = true
+  with_gateway_backend(provider, Some(backend), async fn(ws) {
+    hello(ws)
+    let _ = read_event(ws)
+    provider.push_tool_call(
+      "call-1", "delegate_task", "{\"instruction\":\"慢任务\"}",
+    )
+    // The tool call is accepted even though the backend has not answered.
+    let mut accepted = false
+    for _ in 0..<40 {
+      if provider.tool_results.length() > 0 {
+        accepted = true
+        break
+      }
+      @async.sleep(20)
+    }
+    assert_true(accepted)
+    // A provider event must still reach the client while the backend is held.
+    provider.push(
+      @protocol.ServerEvent::TranscriptFinal(
+        session_id="s-1",
+        role="assistant",
+        text="still reading",
+      ),
+    )
+    let mut saw_transcript = false
+    for _ in 0..<20 {
+      match read_event(ws) {
+        Some(@protocol.ServerEvent::TranscriptFinal(text~, ..)) => {
+          assert_eq(text, "still reading")
+          saw_transcript = true
+          break
+        }
+        Some(_) => ()
+        None => break
+      }
+    }
+    assert_true(saw_transcript)
+    backend.gate.put(())
+    @async.sleep(120)
+    assert_eq(provider.background_results.length(), 1)
+    assert_true(
+      provider.background_results[0].contains("agent answer: 慢任务"),
+    )
   })
 }
 
@@ -694,6 +767,10 @@ async test "permission request is approved once and the task continues" {
     )
     let captured = await_permission_request(ws, 10)
     assert_true(captured != "")
+    // The tool call was already answered with an acceptance receipt while the
+    // backend is blocked on the permission prompt.
+    assert_eq(provider.tool_results.length(), 1)
+    assert_true(provider.tool_results[0].1.contains("accepted"))
     send_client(
       ws,
       @protocol.ClientEvent::PermissionRespond(
@@ -735,13 +812,15 @@ async test "permission request is approved once and the task continues" {
       (captured, @ports.PermissionDecision::AllowOnce),
     )
     let (_, output, continue_turn) = provider.tool_results[0]
-    assert_true(output.contains("agent answer"))
+    assert_true(output.contains("accepted"))
     assert_true(continue_turn)
+    assert_eq(provider.background_results.length(), 1)
+    assert_true(provider.background_results[0].contains("agent answer"))
   })
 }
 
 ///|
-async test "denying permission fails the task without a spoken answer" {
+async test "denying permission reports the failure as a background result" {
   let provider = FakeProvider::new()
   let backend = FakeBackend::with_permission(1)
   with_gateway_backend(provider, Some(backend), async fn(ws) {
@@ -776,8 +855,11 @@ async test "denying permission fails the task without a spoken answer" {
       backend.permissions[0],
       (captured, @ports.PermissionDecision::Deny),
     )
+    @async.sleep(120)
     let (_, output, _) = provider.tool_results[0]
-    assert_true(output.contains("permission denied"))
+    assert_true(output.contains("accepted"))
+    assert_eq(provider.background_results.length(), 1)
+    assert_true(provider.background_results[0].contains("permission denied"))
   })
 }
 

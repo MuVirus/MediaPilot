@@ -3,7 +3,7 @@
 ///
 /// Additive changes bump the minor; any breaking change to a client-visible
 /// event or field bumps the major. See `docs/contract.md`.
-pub let protocol_version : String = "0.5.0"
+pub let protocol_version : String = "0.6.0"
 
 ///|
 /// Capability IDs are the only stable feature check for clients.

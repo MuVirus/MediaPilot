@@ -7,7 +7,7 @@ fn env_or(key : String, fallback : String) -> String {
 }
 
 ///|
-let default_instructions : String = "You are a concise voice assistant. Answer in one short sentence. When the user asks you to actually do something, call delegate_task instead of pretending to do it."
+let default_instructions : String = "You are a concise voice assistant. Answer in one short sentence. When the user asks you to actually do something, call delegate_task instead of pretending to do it; call the tool before answering. The tool result may say the work was accepted, not finished: in that case tell the user briefly that you are working on it and do not claim it is done. A later background result will arrive as a system notice; report its actual outcome."
 
 ///|
 /// Gateway entry point.

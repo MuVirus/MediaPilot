@@ -84,6 +84,16 @@ connect → session.hello → session.ready → streaming → session.close
   由客户端决定是否重连。网关不做透明重放，避免重复计费和重复朗读。
 - 会话内不做跨连接恢复；P1 只保证“重连后是新会话”。
 
+## 后台任务
+
+`delegate_task` 是异步受理：provider 读取协程收到工具调用后立刻回受理回执，不等待
+backend。真正的执行在独立的 `tool_runner` 协程里串行进行，完成后通过
+`send_background_result` 注入一个新的实时轮次并播报。这样 provider 读取不会被阻塞，
+用户可以在任务执行期间继续说话、打断或派新任务。
+
+打断会推进一个会话内 generation；已受理但未开始的任务、以及被打断的当前任务都不会
+再产生迟到的结果播报。
+
 ## 背压与打断
 
 - 下发方向：`audio.delta` 走有界队列（256 条）。客户端读得太慢时，上游读取

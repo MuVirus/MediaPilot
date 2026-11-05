@@ -331,6 +331,22 @@ pub fn encode_response_create() -> Json {
 }
 
 ///|
+/// Start a response with per-response instructions and tool choice.
+///
+/// DashScope accepts an OpenAI-style `response` object on `response.create`.
+/// Background results use `tool_choice = "none"` so the model narrates the
+/// result instead of delegating again.
+pub fn encode_response_create_with_instructions(instructions : String) -> Json {
+  Json::object({
+    "type": Json::string("response.create"),
+    "response": Json::object({
+      "instructions": Json::string(instructions),
+      "tool_choice": Json::string("none"),
+    }),
+  })
+}
+
+///|
 pub fn encode_response_cancel() -> Json {
   Json::object({ "type": Json::string("response.cancel") })
 }

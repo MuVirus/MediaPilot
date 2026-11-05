@@ -244,6 +244,9 @@ function handleServerEvent(event) {
       break;
     case "transcript.final":
       lineFor(event.role).textContent = event.text;
+      // A finished segment is its own line. Without this, a later background
+      // result would overwrite the earlier acknowledgement in the same span.
+      if (event.role === "assistant") assistantLine = null;
       break;
     case "audio.delta": {
       const bytes = base64ToBytes(event.data);
@@ -347,7 +350,7 @@ function connectSocket() {
     send({
       type: "session.hello",
       requestId: `c-${Date.now()}`,
-      protocolVersion: "0.5.0",
+      protocolVersion: "0.6.0",
       capabilities: [
         "realtime.audio-in",
         "realtime.audio-out",

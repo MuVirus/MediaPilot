@@ -30,6 +30,10 @@ type PermissionAnswer
 
 type SessionFlow
 
+type TaskJob
+
+type TaskOutcome
+
 // Type aliases
 pub type BackendFactory = async (String) -> Result[&@ports.BackendPort, @ports.ProviderFailure]
 
