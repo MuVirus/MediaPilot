@@ -1,0 +1,314 @@
+///|
+fn make_object(fields : Array[(String, Json)]) -> Json {
+  let map : Map[String, Json] = {}
+  for field in fields {
+    map.set(field.0, field.1)
+  }
+  Json::object(map)
+}
+
+///|
+fn strings_to_json(values : Array[String]) -> Json {
+  let items : Array[Json] = []
+  for value in values {
+    items.push(Json::string(value))
+  }
+  Json::array(items)
+}
+
+///|
+fn parse_object(input : String) -> Map[String, Json] raise ProtocolError {
+  let json = @json.parse(input) catch {
+    error => raise InvalidJson(error.to_string())
+  }
+  match json {
+    Json::Object(map) => map
+    _ => raise InvalidField("event", "expected a JSON object")
+  }
+}
+
+///|
+fn event_type(map : Map[String, Json]) -> String raise ProtocolError {
+  match map.get("type") {
+    Some(Json::String(value)) => value
+    Some(_) => raise InvalidField("type", "expected a string")
+    None => raise MissingField("type")
+  }
+}
+
+///|
+fn string_field(
+  map : Map[String, Json],
+  key : String,
+) -> String raise ProtocolError {
+  match map.get(key) {
+    Some(Json::String(value)) => value
+    Some(_) => raise InvalidField(key, "expected a string")
+    None => raise MissingField(key)
+  }
+}
+
+///|
+fn int_field(
+  map : Map[String, Json],
+  key : String,
+) -> Int32 raise ProtocolError {
+  match map.get(key) {
+    Some(Json::Number(value, ..)) => value.to_int()
+    Some(_) => raise InvalidField(key, "expected a number")
+    None => raise MissingField(key)
+  }
+}
+
+///|
+fn bool_field(
+  map : Map[String, Json],
+  key : String,
+) -> Bool raise ProtocolError {
+  match map.get(key) {
+    Some(Json::True) => true
+    Some(Json::False) => false
+    Some(_) => raise InvalidField(key, "expected a boolean")
+    None => raise MissingField(key)
+  }
+}
+
+///|
+fn string_array_field(
+  map : Map[String, Json],
+  key : String,
+) -> Array[String] raise ProtocolError {
+  match map.get(key) {
+    Some(Json::Array(items)) => {
+      let values : Array[String] = []
+      for item in items {
+        match item {
+          Json::String(value) => values.push(value)
+          _ => raise InvalidField(key, "expected an array of strings")
+        }
+      }
+      values
+    }
+    Some(_) => raise InvalidField(key, "expected an array of strings")
+    None => raise MissingField(key)
+  }
+}
+
+///|
+fn check_audio_format(map : Map[String, Json]) -> Unit raise ProtocolError {
+  let format = string_field(map, "format")
+  if format != "pcm16" {
+    raise InvalidField("format", "only pcm16 is supported")
+  }
+}
+
+///|
+pub fn encode_client_event(event : ClientEvent) -> Json {
+  match event {
+    Hello(request_id~, protocol_version~, capabilities~) =>
+      make_object([
+        ("type", Json::string("session.hello")),
+        ("requestId", Json::string(request_id)),
+        ("protocolVersion", Json::string(protocol_version)),
+        ("capabilities", strings_to_json(capabilities)),
+      ])
+    AudioAppend(data~, format~, sample_rate~, channels~) =>
+      make_object([
+        ("type", Json::string("input.audio.append")),
+        ("data", Json::string(data)),
+        ("format", Json::string(format)),
+        ("sampleRate", Json::number(sample_rate.to_double())),
+        ("channels", Json::number(channels.to_double())),
+      ])
+    Text(text~) =>
+      make_object([
+        ("type", Json::string("input.text")),
+        ("text", Json::string(text)),
+      ])
+    ImageAppend(data~, mime_type~) =>
+      make_object([
+        ("type", Json::string("input.image.append")),
+        ("data", Json::string(data)),
+        ("mimeType", Json::string(mime_type)),
+      ])
+    Interrupt => make_object([("type", Json::string("session.interrupt"))])
+    Close => make_object([("type", Json::string("session.close"))])
+  }
+}
+
+///|
+pub fn encode_client_event_string(event : ClientEvent) -> String {
+  encode_client_event(event).stringify()
+}
+
+///|
+fn decode_client_event_raise(
+  input : String,
+) -> ClientEvent? raise ProtocolError {
+  let map = parse_object(input)
+  let kind = event_type(map)
+  match kind {
+    "session.hello" => {
+      let version = string_field(map, "protocolVersion")
+      if !is_compatible_version(version) {
+        raise UnsupportedVersion(version)
+      }
+      Some(
+        Hello(
+          request_id=string_field(map, "requestId"),
+          protocol_version=version,
+          capabilities=string_array_field(map, "capabilities"),
+        ),
+      )
+    }
+    "input.audio.append" => {
+      check_audio_format(map)
+      Some(
+        AudioAppend(
+          data=string_field(map, "data"),
+          format=string_field(map, "format"),
+          sample_rate=int_field(map, "sampleRate"),
+          channels=int_field(map, "channels"),
+        ),
+      )
+    }
+    "input.text" => Some(Text(text=string_field(map, "text")))
+    "input.image.append" =>
+      Some(
+        ImageAppend(
+          data=string_field(map, "data"),
+          mime_type=string_field(map, "mimeType"),
+        ),
+      )
+    "session.interrupt" => Some(Interrupt)
+    "session.close" => Some(Close)
+    _ => None
+  }
+}
+
+///|
+/// Decode a client event. `Ok(None)` means the event type is unknown and the
+/// caller must ignore it, as required by the contract.
+pub fn decode_client_event(
+  input : String,
+) -> Result[ClientEvent?, ProtocolError] {
+  Ok(decode_client_event_raise(input)) catch {
+    error => Err(error)
+  }
+}
+
+///|
+pub fn encode_server_event(event : ServerEvent) -> Json {
+  match event {
+    Ready(request_id~, session_id~, protocol_version~, capabilities~) =>
+      make_object([
+        ("type", Json::string("session.ready")),
+        ("requestId", Json::string(request_id)),
+        ("sessionId", Json::string(session_id)),
+        ("protocolVersion", Json::string(protocol_version)),
+        ("capabilities", strings_to_json(capabilities)),
+      ])
+    TranscriptPartial(session_id~, role~, text~) =>
+      make_object([
+        ("type", Json::string("transcript.partial")),
+        ("sessionId", Json::string(session_id)),
+        ("role", Json::string(role)),
+        ("text", Json::string(text)),
+      ])
+    TranscriptFinal(session_id~, role~, text~) =>
+      make_object([
+        ("type", Json::string("transcript.final")),
+        ("sessionId", Json::string(session_id)),
+        ("role", Json::string(role)),
+        ("text", Json::string(text)),
+      ])
+    AudioDelta(session_id~, data~, format~, sample_rate~, channels~) =>
+      make_object([
+        ("type", Json::string("audio.delta")),
+        ("sessionId", Json::string(session_id)),
+        ("data", Json::string(data)),
+        ("format", Json::string(format)),
+        ("sampleRate", Json::number(sample_rate.to_double())),
+        ("channels", Json::number(channels.to_double())),
+      ])
+    Error(code~, message~, retryable~) =>
+      make_object([
+        ("type", Json::string("error")),
+        ("code", Json::string(code.to_code())),
+        ("message", Json::string(message)),
+        ("retryable", Json::boolean(retryable)),
+      ])
+  }
+}
+
+///|
+pub fn encode_server_event_string(event : ServerEvent) -> String {
+  encode_server_event(event).stringify()
+}
+
+///|
+fn decode_server_event_raise(
+  input : String,
+) -> ServerEvent? raise ProtocolError {
+  let map = parse_object(input)
+  let kind = event_type(map)
+  match kind {
+    "session.ready" =>
+      Some(
+        Ready(
+          request_id=string_field(map, "requestId"),
+          session_id=string_field(map, "sessionId"),
+          protocol_version=string_field(map, "protocolVersion"),
+          capabilities=string_array_field(map, "capabilities"),
+        ),
+      )
+    "transcript.partial" =>
+      Some(
+        TranscriptPartial(
+          session_id=string_field(map, "sessionId"),
+          role=string_field(map, "role"),
+          text=string_field(map, "text"),
+        ),
+      )
+    "transcript.final" =>
+      Some(
+        TranscriptFinal(
+          session_id=string_field(map, "sessionId"),
+          role=string_field(map, "role"),
+          text=string_field(map, "text"),
+        ),
+      )
+    "audio.delta" => {
+      check_audio_format(map)
+      Some(
+        AudioDelta(
+          session_id=string_field(map, "sessionId"),
+          data=string_field(map, "data"),
+          format=string_field(map, "format"),
+          sample_rate=int_field(map, "sampleRate"),
+          channels=int_field(map, "channels"),
+        ),
+      )
+    }
+    "error" =>
+      Some(
+        Error(
+          code=ErrorCode::from_code(string_field(map, "code")),
+          message=string_field(map, "message"),
+          retryable=bool_field(map, "retryable"),
+        ),
+      )
+    _ => None
+  }
+}
+
+///|
+/// Decode a server event. `Ok(None)` means the event type is unknown and the
+/// caller must ignore it.
+pub fn decode_server_event(
+  input : String,
+) -> Result[ServerEvent?, ProtocolError] {
+  Ok(decode_server_event_raise(input)) catch {
+    error => Err(error)
+  }
+}

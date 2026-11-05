@@ -34,6 +34,8 @@
 | `realtime.text-in` | 客户端可发送文本输入 | `pending: P1` |
 | `realtime.interrupt` | 客户端可打断当前回复并清空播放 | `pending: P1` |
 
+事件的 JSON 形状由 `protocol/codec_test.mbt` 锁定；上表中的能力在传输层实现前仍为 `pending`。
+
 ## 端点
 
 ### `GET /api/health`

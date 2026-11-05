@@ -8,8 +8,8 @@
 
 目标：证明 MoonBit 能在本机完成一次 DashScope Realtime 往返。
 
-- [ ] `protocol/`：事件类型、JSON 编解码、能力常量，附往返测试。
-- [ ] `realtime/`：`RealtimeProvider` 接口 + DashScope adapter 骨架。
+- [x] `protocol/`：事件类型、JSON 编解码、能力常量，附往返测试。
+- [x] `realtime/`：`ProviderEvent` 归一化 + DashScope wire 骨架（URL、鉴权头、音频格式、事件映射）；socket 传输待做。
 - [ ] 连接 DashScope，发送 16 kHz PCM，收到 24 kHz PCM。
 - [ ] 浏览器最小客户端：麦克风 → WS → 播放，能打断。
 - [ ] 记录首字延迟、端到端延迟、断线行为，写进 `docs/decisions/` 或本页。

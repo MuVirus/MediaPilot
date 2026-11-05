@@ -1,0 +1,64 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "MuVirus/MediaPilot/realtime"
+
+import {
+  "MuVirus/MediaPilot/protocol",
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub let dashscope_default_endpoint : String
+
+pub let dashscope_input_sample_rate : Int32
+
+pub let dashscope_output_sample_rate : Int32
+
+pub fn encode_audio_append(String) -> Json
+
+pub fn encode_response_cancel() -> Json
+
+pub fn encode_response_create() -> Json
+
+pub fn encode_text_message(String) -> Json
+
+pub fn normalize_event(Json) -> Result[ProviderEvent?, ProviderError]
+
+pub fn normalize_incoming(String) -> Result[ProviderEvent?, ProviderError]
+
+// Errors
+pub(all) suberror ProviderError {
+  InvalidFrame(String)
+  MissingField(String)
+  UnsupportedProvider(String)
+} derive(@debug.Debug)
+
+// Types and methods
+pub struct DashScopeProvider {
+  config : ProviderConfig
+}
+pub fn DashScopeProvider::auth_header(Self) -> String
+pub fn DashScopeProvider::config(Self) -> ProviderConfig
+pub fn DashScopeProvider::connect_url(Self) -> String
+pub fn DashScopeProvider::input_sample_rate(Self) -> Int32
+pub fn DashScopeProvider::new(ProviderConfig) -> Self
+pub fn DashScopeProvider::output_sample_rate(Self) -> Int32
+
+pub(all) struct ProviderConfig {
+  api_key : String
+  model : String
+  endpoint : String
+  voice : String
+} derive(Eq, @debug.Debug)
+
+pub(all) enum ProviderEvent {
+  AudioDelta(delta~ : String, sample_rate~ : Int32)
+  TranscriptPartial(role~ : String, text~ : String)
+  TranscriptFinal(role~ : String, text~ : String)
+  Interrupted
+  TurnComplete
+  Error(code~ : @protocol.ErrorCode, message~ : String, retryable~ : Bool)
+} derive(Eq, @debug.Debug)
+
+// Type aliases
+
+// Traits
