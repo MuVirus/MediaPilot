@@ -95,7 +95,7 @@ async fn main {
     }
     Ok(session as &@ports.RealtimeProvider)
   }
-  let open_backend : @gateway.BackendFactory = async fn(_session_id) {
+  let open_backend : @gateway.BackendFactory = fn(_session_id) {
     if backend_kind == "none" {
       return Err(@ports.ProviderFailure::{
         code: @protocol.ErrorCode::InternalError,

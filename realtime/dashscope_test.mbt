@@ -146,7 +146,7 @@ test "connect url keeps an existing query" {
 test "audio delta uses the provider output rate by default" {
   let decoded = @realtime.normalize_incoming(
     "{\"type\":\"response.audio.delta\",\"delta\":\"AAEC\"}",
-  ).unwrap()
+  )
   assert_eq(
     decoded,
     Some(@realtime.ProviderEvent::AudioDelta(delta="AAEC", sample_rate=24000)),
@@ -157,7 +157,7 @@ test "audio delta uses the provider output rate by default" {
 test "audio delta honours an explicit sample rate" {
   let decoded = @realtime.normalize_incoming(
     "{\"type\":\"response.output_audio.delta\",\"delta\":\"AAEC\",\"sampleRate\":48000}",
-  ).unwrap()
+  )
   assert_eq(
     decoded,
     Some(@realtime.ProviderEvent::AudioDelta(delta="AAEC", sample_rate=48000)),
@@ -168,7 +168,7 @@ test "audio delta honours an explicit sample rate" {
 test "assistant transcript delta and done" {
   let partial = @realtime.normalize_incoming(
     "{\"type\":\"response.audio_transcript.delta\",\"delta\":\"hel\"}",
-  ).unwrap()
+  )
   assert_eq(
     partial,
     Some(
@@ -177,7 +177,7 @@ test "assistant transcript delta and done" {
   )
   let final_event = @realtime.normalize_incoming(
     "{\"type\":\"response.audio_transcript.done\",\"transcript\":\"hello\"}",
-  ).unwrap()
+  )
   assert_eq(
     final_event,
     Some(
@@ -190,7 +190,7 @@ test "assistant transcript delta and done" {
 test "user transcription events use the user role" {
   let final_event = @realtime.normalize_incoming(
     "{\"type\":\"conversation.item.input_audio_transcription.completed\",\"transcript\":\"你好\"}",
-  ).unwrap()
+  )
   assert_eq(
     final_event,
     Some(@realtime.ProviderEvent::TranscriptFinal(role="user", text="你好")),
@@ -201,7 +201,7 @@ test "user transcription events use the user role" {
 test "user transcription streams text plus stash" {
   let decoded = @realtime.normalize_incoming(
     "{\"type\":\"conversation.item.input_audio_transcription.text\",\"text\":\"你看一下\",\"stash\":\"桌面\"}",
-  ).unwrap()
+  )
   assert_eq(
     decoded,
     Some(
@@ -217,7 +217,7 @@ test "user transcription streams text plus stash" {
 test "user transcription falls back to delta" {
   let decoded = @realtime.normalize_incoming(
     "{\"type\":\"conversation.item.input_audio_transcription.delta\",\"delta\":\"你好\"}",
-  ).unwrap()
+  )
   assert_eq(
     decoded,
     Some(@realtime.ProviderEvent::TranscriptPartial(role="user", text="你好")),
@@ -243,7 +243,7 @@ test "partial transcripts are cumulative for the client" {
 test "speech start maps to interrupt" {
   let decoded = @realtime.normalize_incoming(
     "{\"type\":\"input_audio_buffer.speech_started\"}",
-  ).unwrap()
+  )
   assert_eq(decoded, Some(@realtime.ProviderEvent::Interrupted))
 }
 
@@ -251,7 +251,7 @@ test "speech start maps to interrupt" {
 test "auth errors are not retryable" {
   let decoded = @realtime.normalize_incoming(
     "{\"type\":\"error\",\"error\":{\"code\":\"InvalidApiKey\",\"message\":\"Incorrect API key provided\"}}",
-  ).unwrap()
+  )
   assert_eq(
     decoded,
     Some(
@@ -269,7 +269,7 @@ test "unknown provider events are ignored" {
   let expected : @realtime.ProviderEvent? = None
   let decoded = @realtime.normalize_incoming(
     "{\"type\":\"response.something.new\"}",
-  ).unwrap()
+  )
   assert_eq(decoded, expected)
 }
 

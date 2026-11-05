@@ -137,10 +137,7 @@ async fn DashScopeSession::recv_event(
   match raw {
     None => None
     Some(text) => {
-      let event = match normalize_incoming(text) {
-        Ok(event) => event
-        Err(error) => raise error
-      }
+      let event = normalize_incoming(text)
       match event {
         Some(provider_event) =>
           match provider_event {
@@ -255,6 +252,8 @@ pub async fn DashScopeSession::open(
   let ws = @websocket.connect(provider.connect_url(), headers~) catch {
     error => raise ConnectFailed(error.to_string())
   }
+  // Every failure from here on must drop the socket before propagating.
+  errdefer ws.close()
   let session : DashScopeSession = {
     ws,
     session_id,
@@ -267,40 +266,22 @@ pub async fn DashScopeSession::open(
     send_lock: @async.Mutex(),
   }
   // The provider sends `session.created` before it accepts any command.
-  let _ = session.recv_event(10000) catch {
-    error => {
-      ws.close()
-      raise error
-    }
-  }
+  let _ = session.recv_event(10000)
   let session_update = match tools {
     Some(tool_list) => provider.session_update(instructions, tools=tool_list)
     None => provider.session_update(instructions)
   }
-  send_frame(ws, session_update.stringify()) catch {
-    error => {
-      ws.close()
-      raise error
-    }
-  }
+  send_frame(ws, session_update.stringify())
   // `session.updated` is not a northbound event, so acceptance is "the next
   // frame is not an error". A rejected `session.update` always answers with
   // `error` first.
-  let first = session.recv_event(10000) catch {
-    error => {
-      ws.close()
-      raise error
-    }
-  }
+  let first = session.recv_event(10000)
   match first {
     Some(
       @ports.RealtimeEvent::Forward(
         event=@protocol.ServerEvent::Error(code~, message~, ..)
       )
-    ) => {
-      ws.close()
-      raise SessionRejected(code.to_code() + ": " + message)
-    }
+    ) => raise SessionRejected(code.to_code() + ": " + message)
     _ => ()
   }
   session

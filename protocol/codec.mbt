@@ -158,9 +158,9 @@ pub fn encode_client_event_string(event : ClientEvent) -> String {
 }
 
 ///|
-fn decode_client_event_raise(
-  input : String,
-) -> ClientEvent? raise ProtocolError {
+/// Decode a client event. `None` means the event type is unknown and the
+/// caller must ignore it, as required by the contract.
+pub fn decode_client_event(input : String) -> ClientEvent? raise ProtocolError {
   let map = parse_object(input)
   let kind = event_type(map)
   match kind {
@@ -206,17 +206,6 @@ fn decode_client_event_raise(
       )
     "session.close" => Some(Close)
     _ => None
-  }
-}
-
-///|
-/// Decode a client event. `Ok(None)` means the event type is unknown and the
-/// caller must ignore it, as required by the contract.
-pub fn decode_client_event(
-  input : String,
-) -> Result[ClientEvent?, ProtocolError] {
-  Ok(decode_client_event_raise(input)) catch {
-    error => Err(error)
   }
 }
 
@@ -310,9 +299,9 @@ pub fn encode_server_event_string(event : ServerEvent) -> String {
 }
 
 ///|
-fn decode_server_event_raise(
-  input : String,
-) -> ServerEvent? raise ProtocolError {
+/// Decode a server event. `None` means the event type is unknown and the
+/// caller must ignore it.
+pub fn decode_server_event(input : String) -> ServerEvent? raise ProtocolError {
   let map = parse_object(input)
   let kind = event_type(map)
   match kind {
@@ -399,16 +388,5 @@ fn decode_server_event_raise(
         ),
       )
     _ => None
-  }
-}
-
-///|
-/// Decode a server event. `Ok(None)` means the event type is unknown and the
-/// caller must ignore it.
-pub fn decode_server_event(
-  input : String,
-) -> Result[ServerEvent?, ProtocolError] {
-  Ok(decode_server_event_raise(input)) catch {
-    error => Err(error)
   }
 }

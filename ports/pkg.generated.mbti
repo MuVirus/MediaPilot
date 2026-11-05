@@ -21,6 +21,9 @@ pub(all) enum BackendEvent {
   Failed(code~ : @protocol.ErrorCode, message~ : String, retryable~ : Bool)
   Completed
 }
+pub fn BackendEvent::equal(Self, Self) -> Bool
+pub fn BackendEvent::not_equal(Self, Self) -> Bool
+pub fn BackendEvent::to_repr(Self) -> @debug.Repr
 
 #derive(Eq, @debug.Debug)
 pub(all) enum PermissionDecision {
@@ -30,7 +33,10 @@ pub(all) enum PermissionDecision {
   Deny
 }
 pub fn PermissionDecision::allows(Self) -> Bool
+pub fn PermissionDecision::equal(Self, Self) -> Bool
 pub fn PermissionDecision::from_token(String) -> Self?
+pub fn PermissionDecision::not_equal(Self, Self) -> Bool
+pub fn PermissionDecision::to_repr(Self) -> @debug.Repr
 pub fn PermissionDecision::to_token(Self) -> String
 
 #derive(Eq, @debug.Debug)
@@ -39,12 +45,18 @@ pub(all) struct ProviderFailure {
   message : String
   retryable : Bool
 }
+pub fn ProviderFailure::equal(Self, Self) -> Bool
+pub fn ProviderFailure::not_equal(Self, Self) -> Bool
+pub fn ProviderFailure::to_repr(Self) -> @debug.Repr
 
 #derive(Eq, @debug.Debug)
 pub(all) enum RealtimeEvent {
   Forward(event~ : @protocol.ServerEvent)
   ToolCall(call_id~ : String, name~ : String, arguments~ : String)
 }
+pub fn RealtimeEvent::equal(Self, Self) -> Bool
+pub fn RealtimeEvent::not_equal(Self, Self) -> Bool
+pub fn RealtimeEvent::to_repr(Self) -> @debug.Repr
 
 // Type aliases
 

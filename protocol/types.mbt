@@ -69,6 +69,12 @@ pub(all) enum ErrorCode {
 }
 
 ///|
+pub extend ErrorCode with Eq::{not_equal, equal}
+
+///|
+pub extend ErrorCode with @moonbitlang/core/debug.Debug::{to_repr}
+
+///|
 pub fn ErrorCode::to_code(self : ErrorCode) -> String {
   match self {
     HandshakeRequired => "handshake_required"
@@ -121,6 +127,12 @@ pub(all) enum ClientEvent {
   Interrupt
   Close
 }
+
+///|
+pub extend ClientEvent with Eq::{not_equal, equal}
+
+///|
+pub extend ClientEvent with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
 /// An event sent by the gateway over `WS /api/realtime`.
@@ -180,10 +192,29 @@ pub(all) enum ServerEvent {
 }
 
 ///|
-#derive(Debug, Show)
+pub extend ServerEvent with Eq::{not_equal, equal}
+
+///|
+pub extend ServerEvent with @moonbitlang/core/debug.Debug::{to_repr}
+
+///|
+#derive(Debug)
 pub(all) suberror ProtocolError {
   InvalidJson(String)
   MissingField(String)
   InvalidField(String, String)
   UnsupportedVersion(String)
 }
+
+///|
+/// `Show` so `to_string` can fill wire error messages; the shape is the
+/// `Debug` repr, e.g. `MissingField("type")`.
+pub impl Show for ProtocolError with fn output(self, logger) {
+  logger.write_string(@moonbitlang/core/debug.to_string(self))
+}
+
+///|
+pub extend ProtocolError with @moonbitlang/core/debug.Debug::{to_repr}
+
+///|
+pub extend ProtocolError with Show::{to_string, output}

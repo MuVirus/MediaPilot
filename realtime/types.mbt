@@ -20,7 +20,13 @@ pub(all) enum ProviderEvent {
 }
 
 ///|
-#derive(Debug, Show)
+pub extend ProviderEvent with Eq::{not_equal, equal}
+
+///|
+pub extend ProviderEvent with @moonbitlang/core/debug.Debug::{to_repr}
+
+///|
+#derive(Debug)
 pub(all) suberror ProviderError {
   InvalidFrame(String)
   MissingField(String)
@@ -28,6 +34,19 @@ pub(all) suberror ProviderError {
   ConnectFailed(String)
   SessionRejected(String)
 }
+
+///|
+/// `Show` so `to_string` can fill wire error messages; the shape is the
+/// `Debug` repr, e.g. `ConnectFailed("...")`.
+pub impl Show for ProviderError with fn output(self, logger) {
+  logger.write_string(@moonbitlang/core/debug.to_string(self))
+}
+
+///|
+pub extend ProviderError with @moonbitlang/core/debug.Debug::{to_repr}
+
+///|
+pub extend ProviderError with Show::{to_string, output}
 
 ///|
 /// Map a provider failure to a contract error code.
@@ -72,3 +91,9 @@ pub(all) struct ProviderConfig {
   endpoint : String
   voice : String
 }
+
+///|
+pub extend ProviderConfig with Eq::{not_equal, equal}
+
+///|
+pub extend ProviderConfig with @moonbitlang/core/debug.Debug::{to_repr}

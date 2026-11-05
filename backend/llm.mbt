@@ -9,6 +9,12 @@ pub(all) struct LlmConfig {
 }
 
 ///|
+pub extend LlmConfig with Eq::{not_equal, equal}
+
+///|
+pub extend LlmConfig with @moonbitlang/core/debug.Debug::{to_repr}
+
+///|
 /// DashScope exposes an OpenAI-compatible endpoint, so the same adapter works
 /// for Qwen and for any other compatible provider by changing `base_url`.
 pub let default_llm_base_url : String = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -159,13 +165,13 @@ async fn send_error(
 
 ///|
 /// The LLM backend opens a connection per request, so there is nothing to warm.
-async fn LlmBackend::warmup(self : LlmBackend) -> Unit {
+pub fn LlmBackend::warmup(self : LlmBackend) -> Unit {
   let _ = self
 }
 
 ///|
 /// Run one chat completion and stream the answer into the event queue.
-async fn LlmBackend::submit(
+pub async fn LlmBackend::submit(
   self : LlmBackend,
   _task_id : String,
   instruction : String,
@@ -296,13 +302,13 @@ async fn LlmBackend::submit(
 }
 
 ///|
-async fn LlmBackend::cancel(self : LlmBackend, _task_id : String) -> Unit {
+pub fn LlmBackend::cancel(self : LlmBackend, _task_id : String) -> Unit {
   self.cancelled = true
 }
 
 ///|
 /// The LLM backend has no tool loop, so tool answers are ignored.
-async fn LlmBackend::respond_tool(
+pub fn LlmBackend::respond_tool(
   self : LlmBackend,
   _call_id : String,
   _output : String,
@@ -312,7 +318,7 @@ async fn LlmBackend::respond_tool(
 
 ///|
 /// The LLM backend has no permission flow, so permission answers are ignored.
-async fn LlmBackend::respond_permission(
+pub fn LlmBackend::respond_permission(
   self : LlmBackend,
   _request_id : String,
   _decision : @ports.PermissionDecision,
@@ -321,12 +327,12 @@ async fn LlmBackend::respond_permission(
 }
 
 ///|
-async fn LlmBackend::next_event(self : LlmBackend) -> @ports.BackendEvent? {
+pub async fn LlmBackend::next_event(self : LlmBackend) -> @ports.BackendEvent? {
   self.events.get()
 }
 
 ///|
-async fn LlmBackend::close(self : LlmBackend) -> Unit {
+pub async fn LlmBackend::close(self : LlmBackend) -> Unit {
   if !self.closed {
     self.closed = true
     self.events.put(None)

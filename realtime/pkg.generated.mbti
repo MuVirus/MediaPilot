@@ -43,16 +43,16 @@ pub fn function_tool(String, String, @json.Json) -> @json.Json
 
 pub fn merge_partial(String, String, String) -> String
 
-pub fn normalize_event(@json.Json) -> Result[ProviderEvent?, ProviderError]
+pub fn normalize_event(@json.Json) -> ProviderEvent? raise ProviderError
 
-pub fn normalize_incoming(String) -> Result[ProviderEvent?, ProviderError]
+pub fn normalize_incoming(String) -> ProviderEvent? raise ProviderError
 
 pub fn resolve_model_profile(String) -> ModelProfile
 
 pub fn to_server_event(String, ProviderEvent) -> @protocol.ServerEvent?
 
 // Errors
-#derive(Show, @debug.Debug)
+#derive(@debug.Debug)
 pub(all) suberror ProviderError {
   InvalidFrame(String)
   MissingField(String)
@@ -61,7 +61,11 @@ pub(all) suberror ProviderError {
   SessionRejected(String)
 }
 pub fn ProviderError::is_retryable(Self) -> Bool
+pub fn ProviderError::output(Self, &Logger) -> Unit
 pub fn ProviderError::to_error_code(Self) -> @protocol.ErrorCode
+pub fn ProviderError::to_repr(Self) -> @debug.Repr
+pub fn ProviderError::to_string(Self) -> String
+pub impl Show for ProviderError
 
 // Types and methods
 pub struct DashScopeProvider {
@@ -107,6 +111,9 @@ pub(all) struct ModelProfile {
   turn_detection : String
   supports_tools : Bool
 }
+pub fn ModelProfile::equal(Self, Self) -> Bool
+pub fn ModelProfile::not_equal(Self, Self) -> Bool
+pub fn ModelProfile::to_repr(Self) -> @debug.Repr
 
 #derive(Eq, @debug.Debug)
 pub(all) struct ProviderConfig {
@@ -115,6 +122,9 @@ pub(all) struct ProviderConfig {
   endpoint : String
   voice : String
 }
+pub fn ProviderConfig::equal(Self, Self) -> Bool
+pub fn ProviderConfig::not_equal(Self, Self) -> Bool
+pub fn ProviderConfig::to_repr(Self) -> @debug.Repr
 
 #derive(Eq, @debug.Debug)
 pub(all) enum ProviderEvent {
@@ -127,6 +137,9 @@ pub(all) enum ProviderEvent {
   FunctionCall(call_id~ : String, name~ : String, arguments~ : String)
   Error(code~ : @protocol.ErrorCode, message~ : String, retryable~ : Bool)
 }
+pub fn ProviderEvent::equal(Self, Self) -> Bool
+pub fn ProviderEvent::not_equal(Self, Self) -> Bool
+pub fn ProviderEvent::to_repr(Self) -> @debug.Repr
 
 // Type aliases
 

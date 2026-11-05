@@ -330,7 +330,7 @@ async fn read_client_event(
   ws : @websocket.Conn,
 ) -> Result[@protocol.ClientEvent?, @protocol.ProtocolError]? {
   let raw = ws.recv().text.read_all() catch { _ => return None }
-  Some(@protocol.decode_client_event(raw))
+  Some(Ok(@protocol.decode_client_event(raw)) catch { error => Err(error) })
 }
 
 ///|
@@ -511,9 +511,8 @@ async fn client_pump(
         return
       }
     }
-    let event = match @protocol.decode_client_event(raw) {
-      Ok(event) => event
-      Err(error) => {
+    let event = @protocol.decode_client_event(raw) catch {
+      error => {
         flow.outbound.put(
           Some(
             @protocol.ServerEvent::Error(

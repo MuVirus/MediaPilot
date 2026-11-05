@@ -31,6 +31,12 @@ pub(all) struct ModelProfile {
 }
 
 ///|
+pub extend ModelProfile with Eq::{not_equal, equal}
+
+///|
+pub extend ModelProfile with @moonbitlang/core/debug.Debug::{to_repr}
+
+///|
 /// Resolve a model ID to its profile.
 ///
 /// Unknown models get the conservative defaults: no tools, `smart_turn_v2`.
@@ -419,38 +425,29 @@ fn error_event(map : Map[String, Json]) -> ProviderEvent {
 ///|
 fn normalize_object(
   map : Map[String, Json],
-) -> Result[ProviderEvent?, ProviderError] raise ProviderError {
+) -> ProviderEvent? raise ProviderError {
   let kind = string_field(map, "type")
   match kind {
     "response.audio.delta" | "response.output_audio.delta" =>
-      Ok(
-        Some(
-          AudioDelta(
-            delta=string_field(map, "delta"),
-            sample_rate=optional_int(
-              map, "sampleRate", dashscope_output_sample_rate,
-            ),
+      Some(
+        AudioDelta(
+          delta=string_field(map, "delta"),
+          sample_rate=optional_int(
+            map, "sampleRate", dashscope_output_sample_rate,
           ),
         ),
       )
     "response.audio_transcript.delta"
     | "response.output_audio_transcript.delta"
     | "response.text.delta" =>
-      Ok(
-        Some(
-          TranscriptPartial(role="assistant", text=string_field(map, "delta")),
-        ),
-      )
+      Some(TranscriptPartial(role="assistant", text=string_field(map, "delta")))
     "response.audio_transcript.done"
     | "response.output_audio_transcript.done"
     | "response.text.done" =>
-      Ok(
-        Some(
-          TranscriptFinal(
-            role="assistant",
-            text=optional_string(map, "transcript") +
-              optional_string(map, "text"),
-          ),
+      Some(
+        TranscriptFinal(
+          role="assistant",
+          text=optional_string(map, "transcript") + optional_string(map, "text"),
         ),
       )
     "conversation.item.input_audio_transcription.delta"
@@ -464,46 +461,40 @@ fn normalize_object(
       } else {
         complete
       }
-      Ok(Some(TranscriptPartial(role="user", text=value)))
+      Some(TranscriptPartial(role="user", text=value))
     }
     "conversation.item.input_audio_transcription.completed" =>
-      Ok(
-        Some(
-          TranscriptFinal(role="user", text=optional_string(map, "transcript")),
-        ),
+      Some(
+        TranscriptFinal(role="user", text=optional_string(map, "transcript")),
       )
-    "input_audio_buffer.speech_started" => Ok(Some(Interrupted))
-    "response.created" => Ok(Some(ResponseStarted))
+    "input_audio_buffer.speech_started" => Some(Interrupted)
+    "response.created" => Some(ResponseStarted)
     "response.function_call_arguments.done" =>
-      Ok(
-        Some(
-          FunctionCall(
-            call_id=optional_string(map, "call_id"),
-            name=optional_string(map, "name"),
-            arguments=optional_string(map, "arguments"),
-          ),
+      Some(
+        FunctionCall(
+          call_id=optional_string(map, "call_id"),
+          name=optional_string(map, "name"),
+          arguments=optional_string(map, "arguments"),
         ),
       )
-    "response.done" => Ok(Some(TurnComplete))
-    "error" => Ok(Some(error_event(map)))
-    _ => Ok(None)
+    "response.done" => Some(TurnComplete)
+    "error" => Some(error_event(map))
+    _ => None
   }
 }
 
 ///|
-pub fn normalize_event(json : Json) -> Result[ProviderEvent?, ProviderError] {
+pub fn normalize_event(json : Json) -> ProviderEvent? raise ProviderError {
   match json {
-    Json::Object(map) => normalize_object(map) catch { error => Err(error) }
-    _ => Err(InvalidFrame("expected a JSON object"))
+    Json::Object(map) => normalize_object(map)
+    _ => raise InvalidFrame("expected a JSON object")
   }
 }
 
 ///|
-pub fn normalize_incoming(
-  input : String,
-) -> Result[ProviderEvent?, ProviderError] {
+pub fn normalize_incoming(input : String) -> ProviderEvent? raise ProviderError {
   let json = @json.parse(input) catch {
-    error => return Err(InvalidFrame(error.to_string()))
+    error => raise InvalidFrame(error.to_string())
   }
   normalize_event(json)
 }

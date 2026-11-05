@@ -25,9 +25,9 @@ pub let capability_task : String
 
 pub let capability_text_in : String
 
-pub fn decode_client_event(String) -> Result[ClientEvent?, ProtocolError]
+pub fn decode_client_event(String) -> ClientEvent? raise ProtocolError
 
-pub fn decode_server_event(String) -> Result[ServerEvent?, ProtocolError]
+pub fn decode_server_event(String) -> ServerEvent? raise ProtocolError
 
 pub fn encode_client_event(ClientEvent) -> @json.Json
 
@@ -42,13 +42,17 @@ pub fn is_compatible_version(String) -> Bool
 pub let protocol_version : String
 
 // Errors
-#derive(Show, @debug.Debug)
+#derive(@debug.Debug)
 pub(all) suberror ProtocolError {
   InvalidJson(String)
   MissingField(String)
   InvalidField(String, String)
   UnsupportedVersion(String)
 }
+pub fn ProtocolError::output(Self, &Logger) -> Unit
+pub fn ProtocolError::to_repr(Self) -> @debug.Repr
+pub fn ProtocolError::to_string(Self) -> String
+pub impl Show for ProtocolError
 
 // Types and methods
 #derive(Eq, @debug.Debug)
@@ -61,6 +65,9 @@ pub(all) enum ClientEvent {
   Interrupt
   Close
 }
+pub fn ClientEvent::equal(Self, Self) -> Bool
+pub fn ClientEvent::not_equal(Self, Self) -> Bool
+pub fn ClientEvent::to_repr(Self) -> @debug.Repr
 
 #derive(Eq, @debug.Debug)
 pub(all) enum ErrorCode {
@@ -74,8 +81,11 @@ pub(all) enum ErrorCode {
   InternalError
   Unknown(String)
 }
+pub fn ErrorCode::equal(Self, Self) -> Bool
 pub fn ErrorCode::from_code(String) -> Self
+pub fn ErrorCode::not_equal(Self, Self) -> Bool
 pub fn ErrorCode::to_code(Self) -> String
+pub fn ErrorCode::to_repr(Self) -> @debug.Repr
 
 #derive(Eq, @debug.Debug)
 pub(all) enum ServerEvent {
@@ -89,6 +99,9 @@ pub(all) enum ServerEvent {
   PermissionResolved(session_id~ : String, request_id~ : String, decision~ : String, source~ : String)
   Error(code~ : ErrorCode, message~ : String, retryable~ : Bool)
 }
+pub fn ServerEvent::equal(Self, Self) -> Bool
+pub fn ServerEvent::not_equal(Self, Self) -> Bool
+pub fn ServerEvent::to_repr(Self) -> @debug.Repr
 
 // Type aliases
 

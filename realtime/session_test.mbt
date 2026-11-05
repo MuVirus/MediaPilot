@@ -82,7 +82,7 @@ test "response started has no northbound event" {
 
 ///|
 test "response.created is normalized as a turn start" {
-  let decoded = @realtime.normalize_incoming("{\"type\":\"response.created\"}").unwrap()
+  let decoded = @realtime.normalize_incoming("{\"type\":\"response.created\"}")
   assert_eq(decoded, Some(@realtime.ProviderEvent::ResponseStarted))
 }
 

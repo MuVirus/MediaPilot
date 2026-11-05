@@ -7,7 +7,7 @@ test "hello round trip" {
   )
   let decoded = @protocol.decode_client_event(
     @protocol.encode_client_event_string(event),
-  ).unwrap()
+  )
   assert_eq(decoded, Some(event))
 }
 
@@ -21,7 +21,7 @@ test "audio append round trip" {
   )
   let decoded = @protocol.decode_client_event(
     @protocol.encode_client_event_string(event),
-  ).unwrap()
+  )
   assert_eq(decoded, Some(event))
 }
 
@@ -35,27 +35,33 @@ test "interrupt encodes to the documented shape" {
 ///|
 test "unknown events are ignored" {
   let expected : @protocol.ClientEvent? = None
-  let decoded = @protocol.decode_client_event("{\"type\":\"future.thing\"}").unwrap()
+  let decoded = @protocol.decode_client_event("{\"type\":\"future.thing\"}")
   assert_eq(decoded, expected)
 }
 
 ///|
 test "missing type is a protocol error" {
-  let decoded = @protocol.decode_client_event("{}")
+  let decoded = Ok(@protocol.decode_client_event("{}")) catch {
+    error => Err(error)
+  }
   assert_true(decoded is Err(@protocol.MissingField("type")))
 }
 
 ///|
 test "unsupported major version is rejected" {
   let raw = "{\"type\":\"session.hello\",\"requestId\":\"c-1\",\"protocolVersion\":\"1.0.0\",\"capabilities\":[]}"
-  let decoded = @protocol.decode_client_event(raw)
+  let decoded = Ok(@protocol.decode_client_event(raw)) catch {
+    error => Err(error)
+  }
   assert_true(decoded is Err(@protocol.UnsupportedVersion("1.0.0")))
 }
 
 ///|
 test "non pcm16 audio is rejected" {
   let raw = "{\"type\":\"input.audio.append\",\"data\":\"AAEC\",\"format\":\"opus\",\"sampleRate\":16000,\"channels\":1}"
-  let decoded = @protocol.decode_client_event(raw)
+  let decoded = Ok(@protocol.decode_client_event(raw)) catch {
+    error => Err(error)
+  }
   assert_true(
     decoded is Err(@protocol.InvalidField("format", "only pcm16 is supported")),
   )
@@ -72,7 +78,7 @@ test "server audio delta round trip" {
   )
   let decoded = @protocol.decode_server_event(
     @protocol.encode_server_event_string(event),
-  ).unwrap()
+  )
   assert_eq(decoded, Some(event))
 }
 
@@ -87,7 +93,7 @@ test "task updated round trip" {
   )
   let decoded = @protocol.decode_server_event(
     @protocol.encode_server_event_string(event),
-  ).unwrap()
+  )
   assert_eq(decoded, Some(event))
 }
 
@@ -95,7 +101,7 @@ test "task updated round trip" {
 test "task updated without step still decodes" {
   let decoded = @protocol.decode_server_event(
     "{\"type\":\"task.updated\",\"sessionId\":\"s-1\",\"taskId\":\"t-1\",\"status\":\"running\",\"text\":\"partial\"}",
-  ).unwrap()
+  )
   match decoded {
     Some(@protocol.ServerEvent::TaskUpdated(step~, ..)) => assert_eq(step, "")
     _ => fail("expected task.updated")
@@ -114,7 +120,7 @@ test "permission request round trip" {
   )
   let decoded = @protocol.decode_server_event(
     @protocol.encode_server_event_string(event),
-  ).unwrap()
+  )
   assert_eq(decoded, Some(event))
 }
 
@@ -128,7 +134,7 @@ test "permission resolved round trip" {
   )
   let decoded = @protocol.decode_server_event(
     @protocol.encode_server_event_string(event),
-  ).unwrap()
+  )
   assert_eq(decoded, Some(event))
 }
 
@@ -140,7 +146,7 @@ test "permission respond round trip" {
   )
   let decoded = @protocol.decode_client_event(
     @protocol.encode_client_event_string(event),
-  ).unwrap()
+  )
   assert_eq(decoded, Some(event))
 }
 
@@ -148,7 +154,7 @@ test "permission respond round trip" {
 test "permission decision tokens are validated by the gateway" {
   let decoded = @protocol.decode_client_event(
     "{\"type\":\"permission.respond\",\"requestId\":\"p-1\",\"decision\":\"always\"}",
-  ).unwrap()
+  )
   match decoded {
     Some(@protocol.ClientEvent::PermissionRespond(decision~, ..)) =>
       assert_eq(decision, "always")
@@ -164,7 +170,7 @@ test "playback clear round trip" {
   )
   let decoded = @protocol.decode_server_event(
     @protocol.encode_server_event_string(event),
-  ).unwrap()
+  )
   assert_eq(decoded, Some(event))
 }
 
@@ -177,6 +183,6 @@ test "unknown error codes are preserved" {
   )
   let decoded = @protocol.decode_server_event(
     @protocol.encode_server_event_string(event),
-  ).unwrap()
+  )
   assert_eq(decoded, Some(event))
 }

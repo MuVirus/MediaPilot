@@ -27,6 +27,12 @@ pub(all) struct AcpConfig {
 }
 
 ///|
+pub extend AcpConfig with Eq::{not_equal, equal}
+
+///|
+pub extend AcpConfig with @moonbitlang/core/debug.Debug::{to_repr}
+
+///|
 /// One permission option offered by the agent.
 priv struct AcpOption {
   option_id : String
@@ -747,7 +753,7 @@ async fn AcpBackend::run_turn(self : AcpBackend, instruction : String) -> Unit {
 ///|
 /// Start the agent and create its session before the first task, so the first
 /// real task does not pay the process and handshake cost.
-async fn AcpBackend::warmup(self : AcpBackend) -> Unit {
+pub async fn AcpBackend::warmup(self : AcpBackend) -> Unit {
   if self.closed {
     return
   }
@@ -769,7 +775,7 @@ async fn AcpBackend::warmup(self : AcpBackend) -> Unit {
 }
 
 ///|
-async fn AcpBackend::submit(
+pub async fn AcpBackend::submit(
   self : AcpBackend,
   _task_id : String,
   instruction : String,
@@ -795,7 +801,7 @@ async fn AcpBackend::submit(
 }
 
 ///|
-async fn AcpBackend::cancel(self : AcpBackend, _task_id : String) -> Unit {
+pub async fn AcpBackend::cancel(self : AcpBackend, _task_id : String) -> Unit {
   self.cancelled = true
   // ACP requires every pending permission request to be answered as cancelled
   // when the turn is cancelled.
@@ -837,7 +843,7 @@ fn choose_option(
 }
 
 ///|
-async fn AcpBackend::respond_permission(
+pub async fn AcpBackend::respond_permission(
   self : AcpBackend,
   request_id : String,
   decision : @ports.PermissionDecision,
@@ -855,7 +861,7 @@ async fn AcpBackend::respond_permission(
 }
 
 ///|
-async fn AcpBackend::next_event(self : AcpBackend) -> @ports.BackendEvent? {
+pub async fn AcpBackend::next_event(self : AcpBackend) -> @ports.BackendEvent? {
   self.events.get()
 }
 
@@ -905,7 +911,7 @@ async fn kill_pid(pid : Int32) -> Unit {
 }
 
 ///|
-async fn AcpBackend::close(self : AcpBackend) -> Unit {
+pub async fn AcpBackend::close(self : AcpBackend) -> Unit {
   if self.closed {
     return
   }
@@ -939,13 +945,22 @@ pub impl @ports.BackendPort for AcpBackend with fn cancel(self, task_id) {
 }
 
 ///|
+/// The agent runs its own tools, so the gateway never routes one here.
+pub fn AcpBackend::respond_tool(
+  self : AcpBackend,
+  _call_id : String,
+  _output : String,
+) -> Unit {
+  let _ = self
+}
+
+///|
 pub impl @ports.BackendPort for AcpBackend with fn respond_tool(
   self,
-  _call_id,
-  _output,
+  call_id,
+  output,
 ) {
-  // The agent runs its own tools, so the gateway never routes one here.
-  let _ = self
+  self.respond_tool(call_id, output)
 }
 
 ///|

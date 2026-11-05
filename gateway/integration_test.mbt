@@ -109,7 +109,7 @@ pub impl @ports.RealtimeProvider for FakeProvider with fn output_sample_rate(
 
 ///|
 fn fake_factory(provider : FakeProvider) -> @gateway.ProviderFactory {
-  async fn(_session_id, _tools) { Ok(provider as &@ports.RealtimeProvider) }
+  fn(_session_id, _tools) { Ok(provider as &@ports.RealtimeProvider) }
 }
 
 ///|
@@ -235,7 +235,7 @@ pub impl @ports.BackendPort for FakeBackend with fn close(_self) {
 
 ///|
 fn fake_backend_factory(backend : FakeBackend) -> @gateway.BackendFactory {
-  async fn(_session_id) { Ok(backend as &@ports.BackendPort) }
+  fn(_session_id) { Ok(backend as &@ports.BackendPort) }
 }
 
 ///|
@@ -247,11 +247,7 @@ async fn read_event(ws : @websocket.Conn) -> @protocol.ServerEvent? {
   }
   match raw {
     None => None
-    Some(text) =>
-      match @protocol.decode_server_event(text) {
-        Ok(event) => event
-        Err(_) => None
-      }
+    Some(text) => @protocol.decode_server_event(text) catch { _ => None }
   }
 }
 

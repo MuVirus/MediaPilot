@@ -2,6 +2,7 @@ import {
   "moonbitlang/core/async",
   "moonbitlang/core/async/http",
   "moonbitlang/core/async/websocket",
+  "moonbitlang/core/debug",
   "moonbitlang/core/json",
   "MuVirus/MediaPilot/ports",
   "MuVirus/MediaPilot/protocol",

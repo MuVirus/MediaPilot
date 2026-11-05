@@ -33,6 +33,12 @@ pub(all) enum BackendEvent {
 }
 
 ///|
+pub extend BackendEvent with Eq::{not_equal, equal}
+
+///|
+pub extend BackendEvent with @moonbitlang/core/debug.Debug::{to_repr}
+
+///|
 /// How long a remembered permission decision lasts.
 ///
 /// The backend maps these onto whatever option vocabulary it has. A backend
@@ -49,6 +55,12 @@ pub(all) enum PermissionDecision {
   /// Refuse this request.
   Deny
 }
+
+///|
+pub extend PermissionDecision with Eq::{not_equal, equal}
+
+///|
+pub extend PermissionDecision with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
 pub fn PermissionDecision::to_token(self : PermissionDecision) -> String {

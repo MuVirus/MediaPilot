@@ -11,6 +11,12 @@ pub(all) struct ProviderFailure {
 }
 
 ///|
+pub extend ProviderFailure with Eq::{not_equal, equal}
+
+///|
+pub extend ProviderFailure with @moonbitlang/core/debug.Debug::{to_repr}
+
+///|
 /// One item read from the upstream session.
 ///
 /// Most events are forwarded to the client unchanged. A `ToolCall` is not a
@@ -21,6 +27,12 @@ pub(all) enum RealtimeEvent {
   Forward(event~ : @protocol.ServerEvent)
   ToolCall(call_id~ : String, name~ : String, arguments~ : String)
 }
+
+///|
+pub extend RealtimeEvent with Eq::{not_equal, equal}
+
+///|
+pub extend RealtimeEvent with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
 /// A live upstream realtime session.

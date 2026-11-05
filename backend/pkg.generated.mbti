@@ -37,9 +37,16 @@ pub struct AcpBackend {
   mut cancelled : Bool
   // private fields
 }
+pub async fn AcpBackend::cancel(Self, String) -> Unit
+pub async fn AcpBackend::close(Self) -> Unit
 pub fn AcpBackend::config(Self) -> AcpConfig
 pub fn AcpBackend::is_ready(Self) -> Bool
 pub fn AcpBackend::new(AcpConfig) -> Self
+pub async fn AcpBackend::next_event(Self) -> @ports.BackendEvent?
+pub async fn AcpBackend::respond_permission(Self, String, @ports.PermissionDecision) -> Unit
+pub fn AcpBackend::respond_tool(Self, String, String) -> Unit
+pub async fn AcpBackend::submit(Self, String, String) -> Unit
+pub async fn AcpBackend::warmup(Self) -> Unit
 pub impl @ports.BackendPort for AcpBackend
 
 #derive(Eq, @debug.Debug)
@@ -50,6 +57,9 @@ pub(all) struct AcpConfig {
   inherit_env : Bool
   model : String
 }
+pub fn AcpConfig::equal(Self, Self) -> Bool
+pub fn AcpConfig::not_equal(Self, Self) -> Bool
+pub fn AcpConfig::to_repr(Self) -> @debug.Repr
 
 pub struct LlmBackend {
   config : LlmConfig
@@ -57,8 +67,15 @@ pub struct LlmBackend {
   mut closed : Bool
   mut cancelled : Bool
 }
+pub fn LlmBackend::cancel(Self, String) -> Unit
+pub async fn LlmBackend::close(Self) -> Unit
 pub fn LlmBackend::config(Self) -> LlmConfig
 pub fn LlmBackend::new(LlmConfig) -> Self
+pub async fn LlmBackend::next_event(Self) -> @ports.BackendEvent?
+pub fn LlmBackend::respond_permission(Self, String, @ports.PermissionDecision) -> Unit
+pub fn LlmBackend::respond_tool(Self, String, String) -> Unit
+pub async fn LlmBackend::submit(Self, String, String) -> Unit
+pub fn LlmBackend::warmup(Self) -> Unit
 pub impl @ports.BackendPort for LlmBackend
 
 #derive(Eq, @debug.Debug)
@@ -68,6 +85,9 @@ pub(all) struct LlmConfig {
   model : String
   system_prompt : String
 }
+pub fn LlmConfig::equal(Self, Self) -> Bool
+pub fn LlmConfig::not_equal(Self, Self) -> Bool
+pub fn LlmConfig::to_repr(Self) -> @debug.Repr
 
 // Type aliases
 
