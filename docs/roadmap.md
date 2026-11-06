@@ -79,7 +79,8 @@ P2 已验证的事实：
 P3 已完成的事实：
 
 - 配置根按 `MEDIAPILOT_CONFIG_DIR` → 当前目录 `.media_pilot` → 用户目录
-  `.media_pilot` 查找；`config.env` 优先于旧 `.env.local` / `.env`，进程环境变量最高。
+  `.media_pilot` 查找；只读 `config.env`，本地值覆盖用户级同名字段，进程环境变量最高。
+  不做项目根向上查找，也不读取 `.env` / `.env.local`。
 - `cmd/main` 在监听前校验 API key、bind、并发上限、web 根目录和 ACP 命令，错误直接
   退出，不进入半可用状态。
 - `MEDIAPILOT_MAX_SESSIONS` 默认 16，`MEDIAPILOT_MAX_TASKS` 每会话默认 4。

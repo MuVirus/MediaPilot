@@ -6,6 +6,6 @@ target
 .moonagent/
 .env
 .env.*
-!.env.example
-.media_pilot/
+.media_pilot/*
+!.media_pilot/config.example.env
 *.log

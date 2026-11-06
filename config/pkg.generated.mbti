@@ -2,7 +2,7 @@
 package "MuVirus/MediaPilot/config"
 
 // Values
-pub fn candidate_files(String, String, String) -> Array[String]
+pub fn candidate_files(String, String) -> Array[String]
 
 pub fn choose_root(String, String, String?, Bool, Bool) -> String
 

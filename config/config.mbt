@@ -82,6 +82,10 @@ pub fn home_directory() -> String {
 /// working directory's `.media_pilot` wins when it exists, then the user's.
 /// The working-directory path is the fallback when neither exists so the
 /// startup hint points at a writable, obvious location.
+///
+/// There is deliberately no upward search for a project root: the working
+/// directory is the only local scope. Run the gateway from the directory whose
+/// `.media_pilot` it should read, or set `MEDIAPILOT_CONFIG_DIR`.
 pub fn choose_root(
   cwd : String,
   home : String,
@@ -115,20 +119,12 @@ fn push_unique(paths : Array[String], path : String) -> Unit {
 ///|
 /// Configuration files in priority order, highest first.
 ///
-/// `.env.local` and `.env` are kept as compatibility inputs for the original
-/// P0 layout. They rank below the explicit root's `config.env`, so moving to
-/// `.media_pilot/config.env` is a simple, non-breaking migration.
-pub fn candidate_files(
-  cwd : String,
-  home : String,
-  root : String,
-) -> Array[String] {
+/// The local `.media_pilot/config.env` overrides the user-wide one for the same
+/// key; missing keys fall back to the user-wide file. There is no `.env` or
+/// `.env.local` compatibility input.
+pub fn candidate_files(home : String, root : String) -> Array[String] {
   let paths : Array[String] = []
   push_unique(paths, join_path(root, config_file_name))
-  push_unique(paths, join_path(cwd, ".env.local"))
-  push_unique(paths, join_path(cwd, ".env"))
-  push_unique(paths, join_path(root, ".env.local"))
-  push_unique(paths, join_path(root, ".env"))
   push_unique(
     paths,
     join_path(home, config_directory_name + "/" + config_file_name),
@@ -216,7 +212,7 @@ pub async fn load_from(
   let root = choose_root(cwd, home, explicit, local_exists, user_exists)
   let values : Map[String, String] = Map([])
   let files : Array[String] = []
-  for path in candidate_files(cwd, home, root) {
+  for path in candidate_files(home, root) {
     let exists = @fs.exists(path) catch { _ => false }
     if exists {
       files.push(path)

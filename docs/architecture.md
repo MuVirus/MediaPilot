@@ -52,8 +52,9 @@ Browser / Native client
 `cmd/main` 负责把字符串解释成 provider、backend、上限和鉴权参数。
 
 - 配置根：`MEDIAPILOT_CONFIG_DIR` > 当前目录 `.media_pilot` > 用户目录 `.media_pilot`。
-- 同一根内 `config.env` 优先；旧布局的 `.env.local` / `.env` 作为兼容输入排在后面。
-  进程环境变量最后覆盖所有文件值。
+  当前目录就是启动时的工作目录，网关不会向上寻找项目根。
+- 只读每个根下的 `config.env`。本地同名 key 覆盖用户级，缺失的 key 回退到用户级；
+  进程环境变量最后覆盖所有文件值。不再读取 `.env` / `.env.local`。
 - 启动自检在打开监听端口之前完成：缺 API key、非法 bind、非法上限、找不到 ACP 命令
   都直接报错退出。配置里的 secrets 只存在于内存，不打印。
 - `SessionLimiter` 由一次 `serve` 共享。`session.hello` 通过版本校验后占用一个名额，

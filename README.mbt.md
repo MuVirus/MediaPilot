@@ -31,21 +31,21 @@ moon test --target native
 ### 运行网关与浏览器客户端
 
 ```sh
-New-Item -ItemType Directory -Force .media_pilot
-Copy-Item .env.example .media_pilot/config.env   # 填入 DASHSCOPE_API_KEY
+Copy-Item .media_pilot\config.example.env .media_pilot\config.env   # 填入 DASHSCOPE_API_KEY
 moon run cmd/main --target native
 ```
 
-网关不需要先手工注入环境变量：启动时会按下面的顺序查找配置目录，并读取其中的
-`config.env`。
+网关不需要先手工注入环境变量：启动时会从**当前工作目录**的 `.media_pilot` 读取
+`config.env`，没有本地文件时回退到用户目录的 `.media_pilot`。
 
 1. `MEDIAPILOT_CONFIG_DIR` 指定的目录
 2. 当前工作目录下的 `.media_pilot`
 3. 用户目录下的 `.media_pilot`（例如 `~/.media_pilot`）
 
-旧布局的 `.env.local` / `.env` 仍会读取，但优先级低于 `config.env`；进程环境变量
-始终最高。缺失 API key、非法 `MEDIAPILOT_BIND`、非法上限或找不到配置的 ACP 命令
-会在启动时报错退出，而不是带病运行。
+本地配置优先；同名 key 以本地为准，缺失的 key 再回退到用户级配置。进程环境变量
+始终最高。网关不会向上寻找项目根，所以应从希望读取其 `.media_pilot` 的目录启动。
+缺失 API key、非法 `MEDIAPILOT_BIND`、非法上限或找不到配置的 ACP 命令会在启动时
+报错退出，而不是带病运行。
 
 然后打开 <http://127.0.0.1:8787/>，点“开始”授权麦克风即可对话。页面必须通过
 `127.0.0.1` 访问，否则浏览器不会授予麦克风权限。
@@ -75,8 +75,8 @@ moon run cmd/dashscope-smoke --target native
 
 `cmd/dashscope-smoke` 会连接 DashScope、发送 `session.update`、跑一次文本轮次、
 一次打断探测和一次音频轮次，只打印事件类型与转写文本，不打印 key 和音频内容。
-它目前只读进程环境变量：先从 `.media_pilot/config.env`（或旧 `.env.local`）把值
-注入进程，例如在 PowerShell 里 `Set-Item Env:DASHSCOPE_API_KEY ...`。
+它目前只读进程环境变量：先从 `.media_pilot/config.env` 把值注入进程，例如在
+PowerShell 里 `Set-Item Env:DASHSCOPE_API_KEY ...`。
 
 ## 设计来源
 

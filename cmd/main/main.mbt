@@ -32,8 +32,8 @@ let default_instructions : String = "You are a concise voice assistant. Answer i
 /// Gateway entry point.
 ///
 /// Configuration is read from `.media_pilot/config.env` in the working
-/// directory, then the user's `.media_pilot`, then the legacy `.env.local` and
-/// `.env` files. The process environment always wins. Secrets are never printed.
+/// directory, falling back to the user's `.media_pilot/config.env` for missing
+/// keys. The process environment always wins. Secrets are never printed.
 async fn main {
   let loaded = @config.load_config()
   println("[gateway] config root=" + loaded.root)
