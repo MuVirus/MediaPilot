@@ -11,10 +11,10 @@ pub type ProviderFactory = async (String, Json?) -> Result[
 
 ///|
 /// Opens one agent backend for a client session. The arguments are the session
-/// id and the resolved working directory (`""` when the deployment has none).
-/// `None` means the deployment has no backend and `delegate_task` is not offered
-/// to the model.
-pub type BackendFactory = async (String, String) -> Result[
+/// id, the resolved backend id, and the resolved working directory (`""` when
+/// the backend does not use one). `None` means the deployment has no backend and
+/// `delegate_task` is not offered to the model.
+pub type BackendFactory = async (String, String, String) -> Result[
   &@ports.BackendPort,
   @ports.ProviderFailure,
 ]
@@ -38,6 +38,7 @@ pub async fn run_gateway(
   max_tasks_per_session~ : Int32 = default_max_tasks_per_session,
   auth_token~ : String = "",
   workspaces~ : Workspaces = Workspaces::disabled(),
+  backends~ : BackendCatalog = BackendCatalog::disabled(),
 ) -> Unit {
   let addr = @socket.Addr::parse(bind)
   let server = @http.Server(addr)
@@ -53,6 +54,7 @@ pub async fn run_gateway(
         max_tasks_per_session~,
         auth_token~,
         workspaces~,
+        backends~,
       )
     (Some(backend), None) =>
       serve(
@@ -63,6 +65,7 @@ pub async fn run_gateway(
         max_tasks_per_session~,
         auth_token~,
         workspaces~,
+        backends~,
       )
     (None, Some(root)) =>
       serve(
@@ -73,6 +76,7 @@ pub async fn run_gateway(
         max_tasks_per_session~,
         auth_token~,
         workspaces~,
+        backends~,
       )
     (None, None) =>
       serve(
@@ -82,6 +86,7 @@ pub async fn run_gateway(
         max_tasks_per_session~,
         auth_token~,
         workspaces~,
+        backends~,
       )
   }
 }
@@ -98,12 +103,21 @@ pub async fn serve(
   max_tasks_per_session~ : Int32 = default_max_tasks_per_session,
   auth_token~ : String = "",
   workspaces~ : Workspaces = Workspaces::disabled(),
+  backends~ : BackendCatalog = BackendCatalog::disabled(),
 ) -> Unit {
   let limiter = SessionLimiter::new(max_sessions)
   server.run_forever((request, conn) => {
     let path = route_path(request.path)
     match (request.meth, path) {
       (Get, "/api/health") => handle_health(conn, limiter)
+      (Get, "/api/backends") =>
+        if !request_authorized(request, auth_token) {
+          respond(
+            conn, 401, "Unauthorized", "application/json", "{\"error\":\"unauthorized\"}",
+          )
+        } else {
+          respond(conn, 200, "OK", "application/json", backends.json())
+        }
       (Get, "/api/fs/roots") =>
         if !request_authorized(request, auth_token) {
           respond(
@@ -112,7 +126,7 @@ pub async fn serve(
         } else {
           let payload = roots_payload(
             workspaces.default_root(),
-            workspaces.is_enabled(),
+            backends.any_requires_workspace(),
           )
           respond(conn, 200, "OK", "application/json", payload.stringify())
         }
@@ -139,11 +153,13 @@ pub async fn serve(
                 limiter,
                 max_tasks_per_session,
                 workspaces,
+                backends,
                 open_backend=backend,
               )
             None =>
               handle_realtime(
                 request, conn, open_provider, limiter, max_tasks_per_session, workspaces,
+                backends,
               )
           }
         }
@@ -375,6 +391,7 @@ async fn handle_realtime(
   limiter : SessionLimiter,
   max_tasks_per_session : Int32,
   workspaces : Workspaces,
+  backends : BackendCatalog,
   open_backend? : BackendFactory,
 ) -> Unit {
   let ws = @websocket.from_http_server(request, conn) catch {
@@ -398,11 +415,12 @@ async fn handle_realtime(
             request_id~,
             protocol_version~,
             capabilities~,
+            backend~,
             workspace~
           )
         )
       )
-    ) => (request_id, protocol_version, capabilities, workspace)
+    ) => (request_id, protocol_version, capabilities, backend, workspace)
     Some(Ok(_)) => {
       send_error(
         ws,
@@ -413,7 +431,13 @@ async fn handle_realtime(
       return
     }
   }
-  let (request_id, protocol_version, client_capabilities, requested_workspace) = hello
+  let (
+    request_id,
+    protocol_version,
+    client_capabilities,
+    requested_backend,
+    requested_workspace,
+  ) = hello
   if !@protocol.is_compatible_version(protocol_version) {
     send_error(
       ws,
@@ -423,12 +447,26 @@ async fn handle_realtime(
     )
     return
   }
-  let workspace = match workspaces.resolve(requested_workspace) {
-    Ok(path) => path
+  let backend_entry = match backends.resolve(requested_backend) {
+    Ok(entry) => entry
     Err(message) => {
-      send_error(ws, @protocol.ErrorCode::WorkspaceDenied, message, false)
+      send_error(ws, @protocol.ErrorCode::BackendUnavailable, message, false)
       return
     }
+  }
+  // A workspace is only meaningful for backends that touch the filesystem. For
+  // `llm` and `none` the requested value is ignored so a stale client setting
+  // never blocks a session.
+  let workspace = if backend_entry.requires_workspace {
+    match workspaces.resolve(requested_workspace) {
+      Ok(path) => path
+      Err(message) => {
+        send_error(ws, @protocol.ErrorCode::WorkspaceDenied, message, false)
+        return
+      }
+    }
+  } else {
+    ""
   }
   if !limiter.try_acquire() {
     send_error(
@@ -443,19 +481,23 @@ async fn handle_realtime(
   }
   defer limiter.release()
   let session_id = next_session_id()
-  let backend = match open_backend {
-    Some(factory) =>
-      match factory(session_id, workspace) {
-        Ok(backend) => Some(backend)
-        Err(failure) => {
-          println(
-            "[gateway] backend unavailable, continuing without tools: " +
-            failure.message,
-          )
-          None
+  let backend = if backend_entry.id == "none" {
+    None
+  } else {
+    match open_backend {
+      Some(factory) =>
+        match factory(session_id, backend_entry.id, workspace) {
+          Ok(backend) => Some(backend)
+          Err(failure) => {
+            println(
+              "[gateway] backend unavailable, continuing without tools: " +
+              failure.message,
+            )
+            None
+          }
         }
-      }
-    None => None
+      None => None
+    }
   }
   let tools = match backend {
     Some(_) => Some(Json::array(task_tools()))
@@ -480,6 +522,7 @@ async fn handle_realtime(
       session_id~,
       protocol_version=@protocol.protocol_version,
       capabilities~,
+      backend=backend_entry.id,
       workspace~,
     ),
   )

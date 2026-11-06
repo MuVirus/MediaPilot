@@ -158,10 +158,9 @@ async fn main {
       _ => configured_cwd
     }
   }
-  // Workspace selection is ACP-only: the LLM backend has no filesystem view.
-  // Clients may browse any directory; this only supplies the default and tells
-  // `/api/fs/roots` whether the picker is meaningful.
-  let workspaces = @gateway.Workspaces::new(acp_cwd, backend_kind == "acp")
+  // A workspace is only meaningful for backends that touch the filesystem. The
+  // catalog tells clients which ids exist and which need a directory.
+  let workspaces = @gateway.Workspaces::new(acp_cwd)
   let acp_config : @backend.AcpConfig = {
     command: loaded.get_or("MEDIAPILOT_ACP_COMMAND", "opencode"),
     args: [loaded.get_or("MEDIAPILOT_ACP_MODE", "acp")],
@@ -169,7 +168,8 @@ async fn main {
     inherit_env: true,
     model: loaded.get_or("MEDIAPILOT_ACP_MODEL", ""),
   }
-  if backend_kind == "acp" && !command_available(acp_config.command) {
+  let acp_available = command_available(acp_config.command)
+  if backend_kind == "acp" && !acp_available {
     println(
       "[gateway] MEDIAPILOT_ACP_COMMAND was not found: " + acp_config.command,
     )
@@ -178,26 +178,44 @@ async fn main {
     )
     return
   }
+  if !acp_available {
+    println(
+      "[gateway] ACP is not available; " + acp_config.command + " was not found",
+    )
+  }
+  let backend_entries : Array[@gateway.BackendEntry] = [
+    { id: "llm", label: "LLM（仅对话）", requires_workspace: false, },
+  ]
+  if acp_available {
+    backend_entries.push({
+      id: "acp",
+      label: "ACP（" + acp_config.command + "）",
+      requires_workspace: true,
+    })
+  }
+  backend_entries.push({
+    id: "none",
+    label: "无后台代理（仅语音对话）",
+    requires_workspace: false,
+  })
+  let backends = @gateway.BackendCatalog::new(backend_kind, backend_entries)
   println("[gateway] model=" + config.model)
   println("[gateway] voice=" + config.voice)
+  let mut available_ids = ""
+  for entry in backends.entries() {
+    if available_ids != "" {
+      available_ids = available_ids + ","
+    }
+    available_ids = available_ids + entry.id
+  }
   println(
-    "[gateway] backend=" +
-    backend_kind +
-    (if backend_kind == "acp" {
-      " command=" + acp_config.command
-    } else {
-      " model=" + llm_config.model
-    }),
+    "[gateway] backend default=" +
+    backends.default_id() +
+    " available=" +
+    available_ids,
   )
   println("[gateway] web=" + static_root)
-  println(
-    "[gateway] workspace picker=" +
-    (if workspaces.is_enabled() {
-      "on default=" + workspaces.default_root()
-    } else {
-      "off"
-    }),
-  )
+  println("[gateway] workspace default=" + workspaces.default_root())
   println(
     "[gateway] max sessions=" +
     max_sessions.to_string() +
@@ -233,15 +251,12 @@ async fn main {
     }
     Ok(session as &@ports.RealtimeProvider)
   }
-  let open_backend : @gateway.BackendFactory = fn(_session_id, workspace) {
-    if backend_kind == "none" {
-      return Err(@ports.ProviderFailure::{
-        code: @protocol.ErrorCode::InternalError,
-        message: "MEDIAPILOT_BACKEND=none disables tools",
-        retryable: false,
-      })
-    }
-    if backend_kind == "acp" {
+  let open_backend : @gateway.BackendFactory = fn(
+    _session_id,
+    backend_id,
+    workspace,
+  ) {
+    if backend_id == "acp" {
       let session_config : @backend.AcpConfig = {
         command: acp_config.command,
         args: acp_config.args,
@@ -254,8 +269,14 @@ async fn main {
         model: acp_config.model,
       }
       Ok(@backend.AcpBackend::new(session_config) as &@ports.BackendPort)
-    } else {
+    } else if backend_id == "llm" {
       Ok(@backend.LlmBackend::new(llm_config) as &@ports.BackendPort)
+    } else {
+      Err(@ports.ProviderFailure::{
+        code: @protocol.ErrorCode::BackendUnavailable,
+        message: "backend " + backend_id + " is not available",
+        retryable: false,
+      })
     }
   }
   @gateway.run_gateway(
@@ -267,5 +288,6 @@ async fn main {
     max_tasks_per_session~,
     auth_token~,
     workspaces~,
+    backends~,
   )
 }

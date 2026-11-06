@@ -115,12 +115,13 @@ fn check_audio_format(map : Map[String, Json]) -> Unit raise ProtocolError {
 ///|
 pub fn encode_client_event(event : ClientEvent) -> Json {
   match event {
-    Hello(request_id~, protocol_version~, capabilities~, workspace~) =>
+    Hello(request_id~, protocol_version~, capabilities~, backend~, workspace~) =>
       make_object([
         ("type", Json::string("session.hello")),
         ("requestId", Json::string(request_id)),
         ("protocolVersion", Json::string(protocol_version)),
         ("capabilities", strings_to_json(capabilities)),
+        ("backend", Json::string(backend)),
         ("workspace", Json::string(workspace)),
       ])
     AudioAppend(data~, format~, sample_rate~, channels~) =>
@@ -175,6 +176,7 @@ pub fn decode_client_event(input : String) -> ClientEvent? raise ProtocolError {
           request_id=string_field(map, "requestId"),
           protocol_version=version,
           capabilities=string_array_field(map, "capabilities"),
+          backend=optional_string_field(map, "backend"),
           workspace=optional_string_field(map, "workspace"),
         ),
       )
@@ -219,6 +221,7 @@ pub fn encode_server_event(event : ServerEvent) -> Json {
       session_id~,
       protocol_version~,
       capabilities~,
+      backend~,
       workspace~
     ) =>
       make_object([
@@ -227,6 +230,7 @@ pub fn encode_server_event(event : ServerEvent) -> Json {
         ("sessionId", Json::string(session_id)),
         ("protocolVersion", Json::string(protocol_version)),
         ("capabilities", strings_to_json(capabilities)),
+        ("backend", Json::string(backend)),
         ("workspace", Json::string(workspace)),
       ])
     TranscriptPartial(session_id~, role~, text~) =>
@@ -321,6 +325,7 @@ pub fn decode_server_event(input : String) -> ServerEvent? raise ProtocolError {
           session_id=string_field(map, "sessionId"),
           protocol_version=string_field(map, "protocolVersion"),
           capabilities=string_array_field(map, "capabilities"),
+          backend=optional_string_field(map, "backend"),
           workspace=optional_string_field(map, "workspace"),
         ),
       )

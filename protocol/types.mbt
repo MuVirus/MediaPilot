@@ -4,7 +4,7 @@
 /// Additive changes bump the patch; reserve minor bumps for coordinated
 /// milestones. Any breaking change to a client-visible event or field bumps the
 /// major. See `docs/contract.md`.
-pub let protocol_version : String = "0.6.3"
+pub let protocol_version : String = "0.6.4"
 
 ///|
 /// Capability IDs are the only stable feature check for clients.
@@ -43,11 +43,16 @@ pub let capability_permission : String = "realtime.permission"
 pub let capability_workspace : String = "realtime.workspace"
 
 ///|
+/// The client may choose a backend in `session.hello` from the catalog served
+/// by `GET /api/backends`. An empty id selects the deployment default.
+pub let capability_backend : String = "realtime.backend"
+
+///|
 pub fn all_capabilities() -> Array[String] {
   [
     capability_session, capability_audio_in, capability_audio_out, capability_text_in,
     capability_interrupt, capability_playback_clear, capability_task, capability_permission,
-    capability_workspace,
+    capability_workspace, capability_backend,
   ]
 }
 
@@ -76,6 +81,9 @@ pub(all) enum ErrorCode {
   /// deployment does not use agent working directories. The session is not
   /// created.
   WorkspaceDenied
+  /// The requested `backend` is not in the catalog served by
+  /// `GET /api/backends`. The session is not created.
+  BackendUnavailable
   InternalError
   Unknown(String)
 }
@@ -97,6 +105,7 @@ pub fn ErrorCode::to_code(self : ErrorCode) -> String {
     ProviderAuthFailed => "provider_auth_failed"
     SessionLimit => "session_limit"
     WorkspaceDenied => "workspace_denied"
+    BackendUnavailable => "backend_unavailable"
     InternalError => "internal_error"
     Unknown(code) => code
   }
@@ -113,6 +122,7 @@ pub fn ErrorCode::from_code(code : String) -> ErrorCode {
     "provider_auth_failed" => ProviderAuthFailed
     "session_limit" => SessionLimit
     "workspace_denied" => WorkspaceDenied
+    "backend_unavailable" => BackendUnavailable
     "internal_error" => InternalError
     _ => Unknown(code)
   }
@@ -122,14 +132,16 @@ pub fn ErrorCode::from_code(code : String) -> ErrorCode {
 /// An event sent by a client over `WS /api/realtime`.
 #derive(Eq, Debug)
 pub(all) enum ClientEvent {
-  /// `workspace` selects the agent working directory for this session. An
-  /// empty string asks for the deployment default. Any other value must be an
-  /// absolute, existing directory; the gateway resolves it before starting the
-  /// agent.
+  /// `backend` selects the background backend for this session from
+  /// `GET /api/backends`; an empty string asks for the deployment default.
+  /// `workspace` selects the agent working directory. An empty string asks for
+  /// the deployment default. Any other value must be an absolute, existing
+  /// directory; it is only used by backends that need a filesystem.
   Hello(
     request_id~ : String,
     protocol_version~ : String,
     capabilities~ : Array[String],
+    backend~ : String,
     workspace~ : String
   )
   AudioAppend(
@@ -157,14 +169,16 @@ pub extend ClientEvent with @moonbitlang/core/debug.Debug::{to_repr}
 /// An event sent by the gateway over `WS /api/realtime`.
 #derive(Eq, Debug)
 pub(all) enum ServerEvent {
-  /// `workspace` echoes the resolved working directory, or `""` when the
-  /// deployment does not use one. Clients must use this value, not the one
-  /// they requested, because the default is resolved server-side.
+  /// `backend` echoes the resolved backend id. `workspace` echoes the resolved
+  /// working directory, or `""` when the backend does not use one. Clients must
+  /// use these values, not the ones they requested, because defaults are
+  /// resolved server-side.
   Ready(
     request_id~ : String,
     session_id~ : String,
     protocol_version~ : String,
     capabilities~ : Array[String],
+    backend~ : String,
     workspace~ : String
   )
   TranscriptPartial(session_id~ : String, role~ : String, text~ : String)

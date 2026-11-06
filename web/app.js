@@ -27,6 +27,7 @@ const els = {
   agentState: document.getElementById("agent-state"),
   agentStep: document.getElementById("agent-step"),
   agentText: document.getElementById("agent-text"),
+  backend: document.getElementById("backend"),
   workspacePath: document.getElementById("workspace-path"),
   workspaceBrowse: document.getElementById("workspace-browse"),
   workspaceReset: document.getElementById("workspace-reset"),
@@ -62,7 +63,9 @@ let permissionRequestId = "";
 let permissionTimer = null;
 let agentStartedAt = 0;
 let agentTimer = null;
-let workspaceEnabled = false;
+let backendEntries = [];
+let backendDefault = "";
+let fsEnabled = false;
 let workspaceDefault = "";
 let workspacePath = "";
 let pickerPath = "";
@@ -93,9 +96,7 @@ function setRunning(value) {
   els.start.disabled = value;
   els.stop.disabled = !value;
   els.interrupt.disabled = !value;
-  const workspaceLocked = value || !workspaceEnabled;
-  els.workspaceBrowse.disabled = workspaceLocked;
-  els.workspaceReset.disabled = workspaceLocked;
+  applySettings();
 }
 
 function base64ToBytes(base64) {
@@ -256,7 +257,7 @@ function handleServerEvent(event) {
       taskLine = "";
       hideAgent();
       log(
-        `ready session=${event.sessionId} workspace=${event.workspace || "(none)"}`,
+        `ready session=${event.sessionId} backend=${event.backend || "(default)"} workspace=${event.workspace || "(none)"}`,
       );
       refreshStatus();
       break;
@@ -389,33 +390,72 @@ async function fetchJson(url) {
   return response.json();
 }
 
-// The gateway owns the filesystem view; the page only renders what
-// `/api/fs/roots` and `/api/fs/list` return. Other clients (desktop, TUI) use
-// the same two endpoints.
-function showWorkspace(path) {
-  workspacePath = path || "";
-  els.workspacePath.value = workspacePath;
-  els.workspacePath.placeholder = workspaceDefault
-    ? `默认（${workspaceDefault}）`
-    : "默认";
+// The gateway owns the backend catalog and the filesystem view; the page only
+// renders what `/api/backends`, `/api/fs/roots`, and `/api/fs/list` return.
+// Desktop shells and TUIs use the same endpoints.
+function selectedBackend() {
+  return backendEntries.find((entry) => entry.id === els.backend.value) || null;
 }
 
-async function initWorkspace() {
+function workspaceRequired() {
+  const entry = selectedBackend();
+  return Boolean(entry && entry.requiresWorkspace && fsEnabled);
+}
+
+function applySettings() {
+  const entry = selectedBackend();
+  const required = Boolean(entry && entry.requiresWorkspace);
+  if (!required) {
+    els.workspacePath.value = "";
+    els.workspacePath.placeholder = "此后端不使用工作目录";
+  } else if (!fsEnabled) {
+    els.workspacePath.value = "";
+    els.workspacePath.placeholder = "本部署没有可用的 ACP 目录";
+  } else {
+    els.workspacePath.value = workspacePath;
+    els.workspacePath.placeholder = workspaceDefault
+      ? `默认（${workspaceDefault}）`
+      : "默认";
+  }
+  const locked = running || !workspaceRequired();
+  els.workspaceBrowse.disabled = locked;
+  els.workspaceReset.disabled = locked;
+  els.backend.disabled = running || backendEntries.length === 0;
+}
+
+function showWorkspace(path) {
+  workspacePath = path || "";
+  applySettings();
+}
+
+async function initSettings() {
   try {
-    const data = await fetchJson("/api/fs/roots");
-    workspaceEnabled = Boolean(data.enabled);
-    workspaceDefault = data.default || "";
-    showWorkspace("");
-    els.workspaceBrowse.disabled = !workspaceEnabled;
-    els.workspaceReset.disabled = !workspaceEnabled;
-    if (!workspaceEnabled) {
-      els.workspacePath.placeholder = "未启用（backend 不是 acp）";
+    const [backends, fs] = await Promise.all([
+      fetchJson("/api/backends"),
+      fetchJson("/api/fs/roots"),
+    ]);
+    backendEntries = backends.backends || [];
+    backendDefault = backends.default || "";
+    fsEnabled = Boolean(fs.enabled);
+    workspaceDefault = fs.default || "";
+    els.backend.textContent = "";
+    for (const entry of backendEntries) {
+      const option = document.createElement("option");
+      option.value = entry.id;
+      option.textContent = entry.label || entry.id;
+      els.backend.appendChild(option);
     }
+    if (backendEntries.some((entry) => entry.id === backendDefault)) {
+      els.backend.value = backendDefault;
+    } else if (backendEntries.length > 0) {
+      els.backend.value = backendEntries[0].id;
+    }
+    applySettings();
   } catch (error) {
-    workspaceEnabled = false;
-    els.workspaceBrowse.disabled = true;
-    els.workspaceReset.disabled = true;
-    log(`workspace unavailable: ${error.message}`);
+    backendEntries = [];
+    fsEnabled = false;
+    applySettings();
+    log(`settings unavailable: ${error.message}`);
   }
 }
 
@@ -495,7 +535,7 @@ function connectSocket() {
     send({
       type: "session.hello",
       requestId: `c-${Date.now()}`,
-      protocolVersion: "0.6.3",
+      protocolVersion: "0.6.4",
       capabilities: [
         "realtime.audio-in",
         "realtime.audio-out",
@@ -505,8 +545,10 @@ function connectSocket() {
         "realtime.task",
         "realtime.permission",
         "realtime.workspace",
+        "realtime.backend",
       ],
-      workspace: workspacePath,
+      backend: els.backend.value || "",
+      workspace: workspaceRequired() ? workspacePath : "",
     });
     log("socket open, hello sent");
     setStatus("握手中…");
@@ -672,6 +714,11 @@ els.workspaceReset.addEventListener("click", () => {
   showWorkspace("");
   log("workspace reset to default");
 });
+els.backend.addEventListener("change", () => {
+  applySettings();
+  const entry = selectedBackend();
+  log(`backend selected: ${entry ? entry.label || entry.id : els.backend.value}`);
+});
 els.dirUp.addEventListener("click", () => {
   if (pickerParent) listDirectory(pickerParent);
 });
@@ -688,7 +735,7 @@ els.dirCancel.addEventListener("click", () => {
   els.dirDialog.close();
 });
 
-initWorkspace();
+initSettings();
 
 // Debug hook for the headless smoke test and for manual poking in devtools.
 // Not part of the gateway contract.

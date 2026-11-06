@@ -1,27 +1,24 @@
 ///|
 /// Workspace policy for one gateway process.
 ///
-/// Clients may pick any existing absolute directory on the machine; there is no
-/// configured allowlist. `enabled` is false for deployments without an ACP
-/// backend, where a working directory has no meaning.
-///
-/// The choice is made in `session.hello` and fixed for the session. Switching
-/// directories means closing the connection and reconnecting.
+/// A workspace is only meaningful for backends that touch the filesystem (ACP).
+/// Clients may pick any existing absolute directory; there is no configured
+/// allowlist. The choice is made in `session.hello` and fixed for the session.
+/// Switching directories means closing the connection and reconnecting.
 pub struct Workspaces {
   default_root : String
-  enabled : Bool
 }
 
 ///|
-/// A deployment without workspace selection. `session.hello` must omit the
-/// field (or send `""`), and `session.ready` echoes `""`.
+/// A deployment without a default directory. Only backends that require a
+/// workspace call `resolve`, so this is still safe to use.
 pub fn Workspaces::disabled() -> Workspaces {
-  { default_root: "", enabled: false, }
+  { default_root: "", }
 }
 
 ///|
-pub fn Workspaces::new(default_root : String, enabled : Bool) -> Workspaces {
-  { default_root, enabled, }
+pub fn Workspaces::new(default_root : String) -> Workspaces {
+  { default_root, }
 }
 
 ///|
@@ -30,27 +27,17 @@ pub fn Workspaces::default_root(self : Workspaces) -> String {
 }
 
 ///|
-/// True when the deployment uses agent working directories at all.
-pub fn Workspaces::is_enabled(self : Workspaces) -> Bool {
-  self.enabled
-}
-
-///|
 /// Resolve a client request to an absolute directory.
 ///
-/// - `""` selects the deployment default (or `""` when disabled).
+/// - `""` selects the deployment default.
 /// - Any other value must be an absolute, existing directory.
-/// - Asking for a directory on a deployment that has no workspaces is denied.
 pub async fn Workspaces::resolve(
   self : Workspaces,
   requested : String,
 ) -> Result[String, String] {
   let trimmed = requested.trim().to_owned()
   if trimmed == "" {
-    return if self.enabled { Ok(self.default_root) } else { Ok("") }
-  }
-  if !self.enabled {
-    return Err("this deployment does not use agent working directories")
+    return Ok(self.default_root)
   }
   resolve_directory(trimmed)
 }

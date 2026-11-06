@@ -4,7 +4,7 @@
 未列出的内容——内部模块路径、数据库结构、配置目录里的文件、日志格式——都不是契约，
 可以随时改变。
 
-状态：`v0.6.3`，P2 已完成，P3 进行中。之后的协议变更必须升版本并更新此表。
+状态：`v0.6.4`，P2 已完成，P3 进行中。之后的协议变更必须升版本并更新此表。
 
 范围：当前契约只覆盖实时音频。视频复用同一会话与事件模型，P4 才进入契约。
 
@@ -17,7 +17,7 @@
 
 ```json
 {
-  "protocolVersion": "0.6.3",
+  "protocolVersion": "0.6.4",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"],
   "status": "ok",
   "sessions": 1,
@@ -41,13 +41,14 @@
 | `realtime.task` | 服务端可推送 `task.updated` 背景任务进度 | `gateway/integration_test.mbt` |
 | `realtime.permission` | 服务端可要求客户端批准后台操作 | `gateway/integration_test.mbt` |
 | `realtime.workspace` | 客户端可在 `session.hello` 中选择 agent 工作目录，并通过 `GET /api/fs/*` 浏览目录 | `gateway/integration_test.mbt` |
+| `realtime.backend` | 客户端可在 `session.hello` 中从 `GET /api/backends` 选择后端 | `gateway/integration_test.mbt` |
 
 事件的 JSON 形状由 `protocol/codec_test.mbt` 锁定；`GET /api/health` 的响应形状
 （含 `sessions` / `maxSessions`）由 `gateway/gateway_test.mbt` 锁定；token 解析与
 `SessionLimiter` 由 `gateway/server_wbtest.mbt` 锁定，超限拒绝对端的行为由
 `gateway/integration_test.mbt` 锁定。工作目录的路径解析与目录枚举由
-`gateway/server_wbtest.mbt` 锁定，`GET /api/fs/roots` 与 `GET /api/fs/list` 的鉴权、
-响应和错误码由 `gateway/integration_test.mbt` 锁定。
+`gateway/server_wbtest.mbt` 锁定，`GET /api/backends`、`GET /api/fs/roots` 与
+`GET /api/fs/list` 的鉴权、响应和错误码由 `gateway/integration_test.mbt` 锁定。
 
 ## 端点
 
@@ -55,6 +56,28 @@
 
 无需认证。返回 `protocolVersion`、`capabilities`、`status`、`sessions`、`maxSessions`。
 用于客户端启动时探测，不能用于判断具体功能是否可用——那要看能力列表。
+
+### `GET /api/backends`
+
+返回本部署可选的 backend 列表和默认值，供任何客户端（Web、桌面、TUI）实现后端选择。
+设置了 `MEDIAPILOT_AUTH_TOKEN` 时同样需要鉴权。
+
+```json
+{
+  "default": "acp",
+  "backends": [
+    { "id": "llm", "label": "LLM（仅对话）", "requiresWorkspace": false },
+    { "id": "acp", "label": "ACP（opencode）", "requiresWorkspace": true },
+    { "id": "none", "label": "无后台代理（仅语音对话）", "requiresWorkspace": false }
+  ]
+}
+```
+
+- `id` 是稳定标识，客户端只传这个值，不能传命令或参数。
+- `label` 只用于展示，可能随部署变化。
+- `requiresWorkspace` 为 `true` 时，该 backend 需要工作目录；为 `false` 时不使用。
+- `default` 是 `session.hello` 不传 `backend` 时使用的 id。
+- 命令不可用的 backend 不会出现在列表里；`none` 始终存在。
 
 ### `GET /api/fs/roots`
 
@@ -76,8 +99,9 @@
 
 - `roots` 是可浏览的起点：Windows 为存在的盘符，其他系统为 `/`。
 - `default` 是 `session.hello` 不传 `workspace` 时使用的目录。
-- `enabled` 表示本部署是否使用工作目录；backend 不是 ACP 时为 `false`，客户端不应
-  发送非空 `workspace`。
+- `enabled` 表示本部署是否有 backend 需要工作目录；为 `false` 时客户端不应发送非空
+  `workspace`。具体某个 backend 是否需要目录，以 `/api/backends` 的
+  `requiresWorkspace` 为准。
 - 响应不含 key、会话或用户信息。
 
 ### `GET /api/fs/list?path=<path>`
@@ -146,22 +170,24 @@
 {
   "type": "session.hello",
   "requestId": "c-1",
-  "protocolVersion": "0.6.3",
+  "protocolVersion": "0.6.4",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"],
+  "backend": "acp",
   "workspace": "D:\\work\\beta"
 }
 ```
 
-`workspace` 可以省略或为空字符串，表示使用 `GET /api/fs/roots` 的 `default`。
-服务端回复：
+`backend` 可以省略或为空字符串，表示使用 `GET /api/backends` 的 `default`。
+`workspace` 同样可以省略，表示使用 `GET /api/fs/roots` 的 `default`。服务端回复：
 
 ```json
 {
   "type": "session.ready",
   "requestId": "c-1",
   "sessionId": "s-1",
-  "protocolVersion": "0.6.3",
+  "protocolVersion": "0.6.4",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"],
+  "backend": "acp",
   "workspace": "D:\\work\\beta"
 }
 ```
@@ -171,16 +197,36 @@
 - 握手前收到其他事件 → `error`，`code = "handshake_required"`。
 - 双方能力取交集；服务端只发送交集内的能力事件。
 - `requestId` 原样回传，仅用于关联，不参与业务语义。
-- `workspace` 必须是绝对路径、存在且是目录；否则收到
-  `error`（`code = "workspace_denied"`，`retryable = false`）并关闭，不会创建会话。
-- `session.ready.workspace` 是服务端**解析后**的目录（通常是 `realpath` 结果）。
-  未请求时应使用这里的值，而不是假设它为空。
+- `backend` 必须是 `/api/backends` 列出的 id；否则收到
+  `error`（`code = "backend_unavailable"`，`retryable = false`）并关闭。
+- `workspace` 只在所选 backend 的 `requiresWorkspace = true` 时使用。此时它必须是
+  绝对路径、存在且是目录，否则收到 `error`（`code = "workspace_denied"`，
+  `retryable = false`）并关闭。其他 backend 会忽略该字段并在 `session.ready` 回传
+  `""`。
+- `session.ready.backend` 和 `session.ready.workspace` 是服务端**解析后**的值。
+  未请求时应使用这里的值，而不是假设它们为空。
+
+### 后端选择
+
+后端决定一个会话有没有工具、以及工具由谁执行。选择发生在握手时，一个会话固定一个
+后端；要换后端就关闭当前连接重连。
+
+- 客户端通过 `GET /api/backends` 获取可用 id 和默认值，把选中的 id 放进
+  `session.hello.backend`。
+- `id` 对应服务端配置，客户端不能传命令或参数。命令不可用的 ACP 不会出现在列表里。
+- `none` 表示只要语音对话，不注册 `delegate_task`；`llm` 用 LLM 处理委派任务；
+  `acp` 启动真实的 agent 进程。
+- `MEDIAPILOT_BACKEND` 只设置默认值，不限制客户端选择。可用 backend 仍由部署配置
+  决定。
+- `/api/backends` 与实时连接使用同一个 token。
 
 ### 工作目录选择
 
 工作目录决定 ACP agent 在哪个目录里读写文件、执行命令。选择发生在握手时，
 一个会话一个目录，会话内不能更换；要换目录就关闭当前连接，用新地址重连。
 
+- 只有 `requiresWorkspace = true` 的 backend（当前是 `acp`）使用工作目录。选择
+  `llm` 或 `none` 时，`workspace` 被忽略并回传 `""`。
 - 浏览范围是整个文件系统，没有配置白名单。客户端通过 `GET /api/fs/roots` 获取
   起点，再用 `GET /api/fs/list` 逐级进入目录，把选中的绝对路径放进
   `session.hello.workspace`。
@@ -188,8 +234,6 @@
   并把它作为 `session.ready.workspace` 返回。
 - `MEDIAPILOT_ACP_CWD` 是 agent 的默认目录，与 MediaPilot 自身的启动目录无关；
   它必须是绝对路径且启动时存在，否则拒绝启动。未设置时才回退到启动目录。
-- `MEDIAPILOT_BACKEND` 不是 `acp` 时没有工作目录概念：`enabled` 为 `false`，
-  `session.ready.workspace` 为 `""`，非空请求会被拒绝。
 - 工作目录属于会话状态，不跨重连继承；重连后用新会话的 `workspace` 重新解析。
 - 目录不会被创建。不同会话可以选择不同目录，各自启动一个 agent 进程。
 - 这不是安全边界：agent 以网关进程的身份运行，能访问该身份可访问的一切。
@@ -213,7 +257,7 @@
 
 | `type` | 字段 | 含义 |
 | --- | --- | --- |
-| `session.ready` | `requestId`, `sessionId`, `protocolVersion`, `capabilities`, `workspace` | 握手完成 |
+| `session.ready` | `requestId`, `sessionId`, `protocolVersion`, `capabilities`, `backend`, `workspace` | 握手完成 |
 | `transcript.partial` | `role`, `text` | 当前片段的累计文本（不是增量） |
 | `transcript.final` | `role`, `text` | 一段话的最终转写 |
 | `audio.delta` | `data`, `format`, `sampleRate`, `channels` | 一段可播放音频 |
@@ -372,6 +416,7 @@
 | `provider_auth_failed` | 否 | 上游鉴权失败 |
 | `session_limit` | 是 | 并发会话超限 |
 | `workspace_denied` | 否 | 请求的工作目录不是绝对路径、不存在或不是目录 |
+| `backend_unavailable` | 否 | 请求的 backend 不在 `/api/backends` 列表里 |
 | `internal_error` | 是 | 未分类的服务端错误 |
 
 ## 明确不在契约内

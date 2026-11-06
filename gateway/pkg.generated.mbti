@@ -47,15 +47,35 @@ pub async fn resolve_directory(String) -> Result[String, String]
 
 pub async fn roots_payload(String, Bool) -> @json.Json
 
-pub async fn run_gateway(String, async (String, @json.Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String, String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String, max_sessions? : Int32, max_tasks_per_session? : Int32, auth_token? : String, workspaces? : Workspaces) -> Unit
+pub async fn run_gateway(String, async (String, @json.Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String, String, String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String, max_sessions? : Int32, max_tasks_per_session? : Int32, auth_token? : String, workspaces? : Workspaces, backends? : BackendCatalog) -> Unit
 
-pub async fn serve(@http.Server, async (String, @json.Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String, String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String, max_sessions? : Int32, max_tasks_per_session? : Int32, auth_token? : String, workspaces? : Workspaces) -> Unit
+pub async fn serve(@http.Server, async (String, @json.Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String, String, String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String, max_sessions? : Int32, max_tasks_per_session? : Int32, auth_token? : String, workspaces? : Workspaces, backends? : BackendCatalog) -> Unit
 
 pub fn task_tools() -> Array[@json.Json]
 
 // Errors
 
 // Types and methods
+pub struct BackendCatalog {
+  default_id : String
+  entries : Array[BackendEntry]
+}
+pub fn BackendCatalog::any_requires_workspace(Self) -> Bool
+pub fn BackendCatalog::default_id(Self) -> String
+pub fn BackendCatalog::disabled() -> Self
+pub fn BackendCatalog::entries(Self) -> Array[BackendEntry]
+pub fn BackendCatalog::find(Self, String) -> BackendEntry?
+pub fn BackendCatalog::json(Self) -> String
+pub fn BackendCatalog::new(String, Array[BackendEntry]) -> Self
+pub fn BackendCatalog::payload(Self) -> @json.Json
+pub fn BackendCatalog::resolve(Self, String) -> Result[BackendEntry, String]
+
+pub(all) struct BackendEntry {
+  id : String
+  label : String
+  requires_workspace : Bool
+}
+
 pub struct DirectoryListing {
   path : String
   parent : String?
@@ -81,16 +101,14 @@ pub fn SessionLimiter::try_acquire(Self) -> Bool
 
 pub struct Workspaces {
   default_root : String
-  enabled : Bool
 }
 pub fn Workspaces::default_root(Self) -> String
 pub fn Workspaces::disabled() -> Self
-pub fn Workspaces::is_enabled(Self) -> Bool
-pub fn Workspaces::new(String, Bool) -> Self
+pub fn Workspaces::new(String) -> Self
 pub async fn Workspaces::resolve(Self, String) -> Result[String, String]
 
 // Type aliases
-pub type BackendFactory = async (String, String) -> Result[&@ports.BackendPort, @ports.ProviderFailure]
+pub type BackendFactory = async (String, String, String) -> Result[&@ports.BackendPort, @ports.ProviderFailure]
 
 pub type ProviderFactory = async (String, @json.Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure]
 

@@ -53,10 +53,24 @@ moon run cmd/main --target native
 网关提供：
 
 - `GET /api/health` — 协议版本、能力列表、当前会话数与上限
+- `GET /api/backends` — 可选后端与默认值（有 token 时需鉴权）
 - `GET /api/fs/roots` — 文件系统浏览起点和默认工作目录（有 token 时需鉴权）
 - `GET /api/fs/list?path=` — 列出某个目录下的一级子目录（有 token 时需鉴权）
 - `WS /api/realtime` — 实时音频会话
 - `GET /` — 参考浏览器客户端（`web/`）
+
+### 后端与目录
+
+网页顶部可以选后端：LLM、ACP 或无后台代理。配置里的 `MEDIAPILOT_BACKEND` 只是
+**默认值**，不限制客户端；实际可选列表由 `/api/backends` 返回，命令不可用的 ACP
+不会出现在列表里。每个会话在握手时固定一个后端，换后端就是重连。
+
+- `llm`：委派任务交给 LLM，不需要工作目录。
+- `acp`：启动真实的 agent 进程，需要工作目录。
+- `none`：只要语音对话，不注册工具。
+
+`MEDIAPILOT_ACP_CWD` 是 ACP 的默认工作目录，与 MediaPilot 自身的启动目录无关；
+客户端可以浏览整个文件系统后选择别的目录。一个会话固定一个目录，换目录就是重连。
 
 ### 并发与鉴权
 
@@ -67,12 +81,12 @@ moon run cmd/main --target native
 - 设置 `MEDIAPILOT_AUTH_TOKEN` 后，`WS /api/realtime` 要求
   `Authorization: Bearer <token>` 或 `?token=<token>`；不匹配返回 HTTP `401`。
   浏览器客户端从地址栏读取 `?token=`。`GET /api/health` 和静态资源不需要鉴权，
-  `GET /api/fs/*` 需要。
+  `GET /api/backends` 与 `GET /api/fs/*` 需要。
 - token 只用于准入，不是多租户身份。
 
 ### 选择 ACP 工作目录
 
-`MEDIAPILOT_BACKEND=acp` 时，agent 在哪个目录里执行任务由客户端在握手时选择：
+选择 `ACP` 后端时，agent 在哪个目录里执行任务由客户端在握手时选择：
 
 - **agent 的工作目录与 MediaPilot 自身的启动目录是两件事。** 配置查找、
   `MEDIAPILOT_WEB_ROOT` 仍以启动目录为基准；agent 只在 `MEDIAPILOT_ACP_CWD`
@@ -84,6 +98,7 @@ moon run cmd/main --target native
   `session.hello.workspace`。每个会话可以选不同目录，覆盖上面的默认值。
 - 浏览范围是整个文件系统，没有白名单；路径必须存在且是目录，否则收到
   `workspace_denied` 并关闭连接。
+- 只有 `requiresWorkspace = true` 的后端使用这个目录；`llm` 和 `none` 会忽略它。
 - 一个会话固定一个目录，会话内不能切换；换目录就是重连，旧会话的任务随连接结束。
 - 浏览器客户端提供“浏览…”对话框，其他客户端可以复用同样两个端点。
 

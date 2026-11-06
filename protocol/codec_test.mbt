@@ -4,6 +4,7 @@ test "hello round trip" {
     request_id="c-1",
     protocol_version=@protocol.protocol_version,
     capabilities=[@protocol.capability_audio_in, @protocol.capability_audio_out],
+    backend="acp",
     workspace="/work/project",
   )
   let decoded = @protocol.decode_client_event(
@@ -13,17 +14,18 @@ test "hello round trip" {
 }
 
 ///|
-test "hello without a workspace decodes as the default" {
+test "hello without backend or workspace decodes as defaults" {
   let decoded = @protocol.decode_client_event(
-    "{\"type\":\"session.hello\",\"requestId\":\"c-1\",\"protocolVersion\":\"0.6.3\",\"capabilities\":[]}",
+    "{\"type\":\"session.hello\",\"requestId\":\"c-1\",\"protocolVersion\":\"0.6.4\",\"capabilities\":[]}",
   )
   assert_eq(
     decoded,
     Some(
       @protocol.ClientEvent::Hello(
         request_id="c-1",
-        protocol_version="0.6.3",
+        protocol_version="0.6.4",
         capabilities=[],
+        backend="",
         workspace="",
       ),
     ),

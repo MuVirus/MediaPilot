@@ -247,7 +247,19 @@ pub impl @ports.BackendPort for FakeBackend with fn close(_self) {
 
 ///|
 fn fake_backend_factory(backend : FakeBackend) -> @gateway.BackendFactory {
-  fn(_session_id, _workspace) { Ok(backend as &@ports.BackendPort) }
+  fn(_session_id, _backend_id, _workspace) {
+    Ok(backend as &@ports.BackendPort)
+  }
+}
+
+///|
+/// The catalog used by tests: all three ids exist, `acp` needs a workspace.
+fn test_backends(default_id : String) -> @gateway.BackendCatalog {
+  @gateway.BackendCatalog::new(default_id, [
+    { id: "llm", label: "LLM", requires_workspace: false, },
+    { id: "acp", label: "ACP", requires_workspace: true, },
+    { id: "none", label: "none", requires_workspace: false, },
+  ])
 }
 
 ///|
@@ -282,6 +294,7 @@ async fn hello(ws : @websocket.Conn) -> Unit {
         @protocol.capability_audio_in, @protocol.capability_audio_out, @protocol.capability_text_in,
         @protocol.capability_interrupt,
       ],
+      backend="",
       workspace="",
     ),
   )
@@ -299,6 +312,7 @@ async fn hello_with_permission(ws : @websocket.Conn) -> Unit {
         @protocol.capability_audio_in, @protocol.capability_audio_out, @protocol.capability_text_in,
         @protocol.capability_interrupt, @protocol.capability_task, @protocol.capability_permission,
       ],
+      backend="",
       workspace="",
     ),
   )
@@ -332,8 +346,14 @@ async fn with_gateway_backend(
             server,
             fake_factory(provider),
             open_backend=fake_backend_factory(backend),
+            backends=test_backends("llm"),
           )
-        None => @gateway.serve(server, fake_factory(provider))
+        None =>
+          @gateway.serve(
+            server,
+            fake_factory(provider),
+            backends=test_backends("llm"),
+          )
       }
     }
     @async.sleep(50)
@@ -392,6 +412,7 @@ async test "unsupported major version is rejected" {
         request_id="c-1",
         protocol_version="1.0.0",
         capabilities=[],
+        backend="",
         workspace="",
       ),
     )
@@ -1114,11 +1135,48 @@ async fn with_gateway_workspaces(
   auth_token : String,
   body : async (Int32) -> Unit,
 ) -> Unit {
+  with_gateway_custom(
+    provider,
+    workspaces,
+    test_backends("acp"),
+    auth_token,
+    body,
+  )
+}
+
+///|
+/// Start a gateway with an explicit backend catalog.
+async fn with_gateway_custom(
+  provider : FakeProvider,
+  workspaces : @gateway.Workspaces,
+  backends : @gateway.BackendCatalog,
+  auth_token : String,
+  body : async (Int32) -> Unit,
+  open_backend? : @gateway.BackendFactory,
+) -> Unit {
   let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
   let port = server.addr.port()
   @async.with_task_group() <| group => {
     group.spawn_bg(no_wait=true) <| () => {
-      @gateway.serve(server, fake_factory(provider), workspaces~, auth_token~)
+      match open_backend {
+        Some(factory) =>
+          @gateway.serve(
+            server,
+            fake_factory(provider),
+            workspaces~,
+            backends~,
+            auth_token~,
+            open_backend=factory,
+          )
+        None =>
+          @gateway.serve(
+            server,
+            fake_factory(provider),
+            workspaces~,
+            backends~,
+            auth_token~,
+          )
+      }
     }
     @async.sleep(50)
     body(port)
@@ -1136,6 +1194,29 @@ async fn hello_in(ws : @websocket.Conn, workspace : String) -> Unit {
       capabilities=[
         @protocol.capability_audio_in, @protocol.capability_audio_out, @protocol.capability_workspace,
       ],
+      backend="acp",
+      workspace~,
+    ),
+  )
+}
+
+///|
+/// Handshake selecting a backend and (optionally) a workspace.
+async fn hello_pair(
+  ws : @websocket.Conn,
+  backend : String,
+  workspace : String,
+) -> Unit {
+  send_client(
+    ws,
+    @protocol.ClientEvent::Hello(
+      request_id="c-1",
+      protocol_version=@protocol.protocol_version,
+      capabilities=[
+        @protocol.capability_audio_in, @protocol.capability_audio_out, @protocol.capability_backend,
+        @protocol.capability_workspace,
+      ],
+      backend~,
       workspace~,
     ),
   )
@@ -1149,26 +1230,31 @@ async test "hello accepts an existing directory and echoes it" {
   let resolved = @fs.realpath(child + "/") catch { _ => child }
   let provider = FakeProvider::new()
   let seen : Array[String] = []
-  let workspaces = @gateway.Workspaces::new(base, true)
+  let workspaces = @gateway.Workspaces::new(base)
   let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
   let port = server.addr.port()
   @async.with_task_group() <| group => {
     group.spawn_bg(no_wait=true) <| () => {
-      @gateway.serve(server, fake_factory(provider), workspaces~, open_backend=fn(
-        _session_id,
-        workspace,
-      ) {
-        seen.push(workspace)
-        Ok(FakeBackend::new() as &@ports.BackendPort)
-      })
+      @gateway.serve(
+        server,
+        fake_factory(provider),
+        workspaces~,
+        backends=test_backends("acp"),
+        open_backend=fn(_session_id, _backend_id, workspace) {
+          seen.push(workspace)
+          Ok(FakeBackend::new() as &@ports.BackendPort)
+        },
+      )
     }
     @async.sleep(50)
     let ws = @websocket.connect("ws://127.0.0.1:\{port}/api/realtime")
     defer ws.close()
     hello_in(ws, child + "/")
     match read_event(ws) {
-      Some(@protocol.ServerEvent::Ready(workspace~, ..)) =>
+      Some(@protocol.ServerEvent::Ready(workspace~, backend~, ..)) => {
         assert_eq(workspace, resolved)
+        assert_eq(backend, "acp")
+      }
       _ => fail("an existing directory should be accepted")
     }
     assert_eq(seen, [resolved])
@@ -1181,7 +1267,7 @@ async test "hello without a workspace uses the configured default" {
   let base = @fs.tmpdir(prefix="mediapilot-ws-")
   let resolved = @fs.realpath(base) catch { _ => base }
   let provider = FakeProvider::new()
-  let workspaces = @gateway.Workspaces::new(resolved, true)
+  let workspaces = @gateway.Workspaces::new(resolved)
   with_gateway_workspaces(provider, workspaces, "", async fn(port) {
     let ws = @websocket.connect("ws://127.0.0.1:\{port}/api/realtime")
     defer ws.close()
@@ -1199,7 +1285,7 @@ async test "hello without a workspace uses the configured default" {
 async test "hello rejects missing and relative workspaces" {
   let base = @fs.tmpdir(prefix="mediapilot-ws-")
   let provider = FakeProvider::new()
-  let workspaces = @gateway.Workspaces::new(base, true)
+  let workspaces = @gateway.Workspaces::new(base)
   with_gateway_workspaces(provider, workspaces, "", async fn(port) {
     let missing = @websocket.connect("ws://127.0.0.1:\{port}/api/realtime")
     hello_in(missing, base + "/does-not-exist")
@@ -1227,7 +1313,7 @@ async test "hello rejects missing and relative workspaces" {
 async test "filesystem roots require the token and report the default" {
   let base = @fs.tmpdir(prefix="mediapilot-ws-")
   let provider = FakeProvider::new()
-  let workspaces = @gateway.Workspaces::new(base, true)
+  let workspaces = @gateway.Workspaces::new(base)
   with_gateway_workspaces(provider, workspaces, "secret", async fn(port) {
     let url = "http://127.0.0.1:\{port}/api/fs/roots"
     let (anonymous, _) = @http.get_text(url)
@@ -1261,7 +1347,7 @@ async test "filesystem listing returns sorted subdirectories" {
   @fs.mkdir(base + "/alpha", recursive=true, allow_exist=true)
   @fs.write_text(base + "/file.txt", "x")
   let provider = FakeProvider::new()
-  let workspaces = @gateway.Workspaces::new(base, true)
+  let workspaces = @gateway.Workspaces::new(base)
   with_gateway_workspaces(provider, workspaces, "", async fn(port) {
     let query = (base + "/").replace_all(old="\\", new="/")
     let url = "http://127.0.0.1:\{port}/api/fs/list?path=" + query
@@ -1287,4 +1373,150 @@ async test "filesystem listing returns sorted subdirectories" {
     assert_eq(missing_path.code, 400)
   })
   @fs.rmdir(base, recursive=true, allow_missing=true)
+}
+
+///|
+async test "hello selects and echoes a backend" {
+  let base = @fs.tmpdir(prefix="mediapilot-backend-")
+  let resolved = @fs.realpath(base) catch { _ => base }
+  let provider = FakeProvider::new()
+  let seen_backends : Array[String] = []
+  let seen_workspaces : Array[String] = []
+  let factory : @gateway.BackendFactory = fn(
+    _session_id,
+    backend_id,
+    workspace,
+  ) {
+    seen_backends.push(backend_id)
+    seen_workspaces.push(workspace)
+    Ok(FakeBackend::new() as &@ports.BackendPort)
+  }
+  with_gateway_custom(
+    provider,
+    @gateway.Workspaces::new(resolved),
+    test_backends("llm"),
+    "",
+    async fn(port) {
+      let ws = @websocket.connect("ws://127.0.0.1:\{port}/api/realtime")
+      defer ws.close()
+      hello_pair(ws, "acp", "")
+      match read_event(ws) {
+        Some(@protocol.ServerEvent::Ready(backend~, workspace~, ..)) => {
+          assert_eq(backend, "acp")
+          assert_eq(workspace, resolved)
+        }
+        _ => fail("the selected backend should be echoed")
+      }
+    },
+    open_backend=factory,
+  )
+  assert_eq(seen_backends, ["acp"])
+  assert_eq(seen_workspaces, [resolved])
+  @fs.rmdir(base, recursive=true, allow_missing=true)
+}
+
+///|
+async test "hello rejects an unknown backend" {
+  let provider = FakeProvider::new()
+  with_gateway_custom(
+    provider,
+    @gateway.Workspaces::disabled(),
+    test_backends("llm"),
+    "",
+    async fn(port) {
+      let ws = @websocket.connect("ws://127.0.0.1:\{port}/api/realtime")
+      defer ws.close()
+      hello_pair(ws, "ghost", "")
+      match read_event(ws) {
+        Some(@protocol.ServerEvent::Error(code~, retryable~, ..)) => {
+          assert_eq(code, @protocol.ErrorCode::BackendUnavailable)
+          assert_false(retryable)
+        }
+        _ => fail("an unknown backend should be rejected")
+      }
+    },
+  )
+}
+
+///|
+async test "none skips the backend and ignores a workspace" {
+  let provider = FakeProvider::new()
+  let called : Array[String] = []
+  let factory : @gateway.BackendFactory = fn(
+    _session_id,
+    backend_id,
+    _workspace,
+  ) {
+    called.push(backend_id)
+    Ok(FakeBackend::new() as &@ports.BackendPort)
+  }
+  with_gateway_custom(
+    provider,
+    @gateway.Workspaces::disabled(),
+    test_backends("llm"),
+    "",
+    async fn(port) {
+      let ws = @websocket.connect("ws://127.0.0.1:\{port}/api/realtime")
+      defer ws.close()
+      hello_pair(ws, "none", "/definitely/not/here")
+      match read_event(ws) {
+        Some(@protocol.ServerEvent::Ready(backend~, workspace~, ..)) => {
+          assert_eq(backend, "none")
+          assert_eq(workspace, "")
+        }
+        _ => fail("the none backend should be accepted")
+      }
+    },
+    open_backend=factory,
+  )
+  assert_eq(called, [])
+}
+
+///|
+async test "a non-filesystem backend ignores a stale workspace" {
+  let provider = FakeProvider::new()
+  with_gateway_custom(
+    provider,
+    @gateway.Workspaces::disabled(),
+    test_backends("llm"),
+    "",
+    async fn(port) {
+      let ws = @websocket.connect("ws://127.0.0.1:\{port}/api/realtime")
+      defer ws.close()
+      hello_pair(ws, "llm", "/definitely/not/here")
+      match read_event(ws) {
+        Some(@protocol.ServerEvent::Ready(backend~, workspace~, ..)) => {
+          assert_eq(backend, "llm")
+          assert_eq(workspace, "")
+        }
+        _ => fail("llm should accept a stale workspace and ignore it")
+      }
+    },
+  )
+}
+
+///|
+async test "backends endpoint requires the token and lists ids" {
+  let provider = FakeProvider::new()
+  let workspaces = @gateway.Workspaces::new(".")
+  with_gateway_workspaces(provider, workspaces, "secret", async fn(port) {
+    let url = "http://127.0.0.1:\{port}/api/backends"
+    let (anonymous, _) = @http.get_text(url)
+    assert_eq(anonymous.code, 401)
+    let (authorized, body) = @http.get_text(
+      url,
+      headers=Map([("Authorization", "Bearer secret")]),
+    )
+    assert_eq(authorized.code, 200)
+    let map = match @json.parse(body) {
+      @json.Json::Object(map) => map
+      _ => fail("backends response must be an object")
+    }
+    assert_eq(map.get("default"), Some(@json.Json::string("acp")))
+    let entries = match map.get("backends") {
+      Some(@json.Json::Array(items)) => items
+      _ => fail("backends must be an array")
+    }
+    assert_eq(entries.length(), 3)
+  })
 }

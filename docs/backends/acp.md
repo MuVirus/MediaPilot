@@ -112,7 +112,7 @@ agent 没有提供匹配项时回 `{"outcome":{"outcome":"cancelled"}}`，绝不
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `MEDIAPILOT_BACKEND` | `llm` | `acp` 启用本 adapter，`none` 关闭委派 |
+| `MEDIAPILOT_BACKEND` | `llm` | 默认后端；客户端可在 `GET /api/backends` 中改选 `llm` / `acp` / `none` |
 | `MEDIAPILOT_ACP_COMMAND` | `opencode` | agent 可执行文件；Windows 必须是 `.exe`，不能是 npm 的 `.cmd`/`.ps1` 包装 |
 | `MEDIAPILOT_ACP_MODE` | `acp` | 传给可执行文件的第一个参数 |
 | `MEDIAPILOT_ACP_CWD` | 进程当前目录的绝对路径 | 默认工作目录；必须是绝对路径且启动时存在 |
@@ -129,6 +129,10 @@ moon run cmd/main --target native
 例如从 `D:\File\Project\Agent\MediaPilot` 启动网关，但让 agent 在
 `D:\agents\workspace` 里工作，只需要设置 `MEDIAPILOT_ACP_CWD=D:\agents\workspace`；
 MediaPilot 的配置发现、静态文件路径不会跟着变。
+
+`MEDIAPILOT_BACKEND` 只决定默认值。只要 ACP 命令可用，客户端就能在
+`GET /api/backends` 里看到 `acp` 并在会话中选择它，即使默认是 `llm` 或 `none`。
+命令不可用时，`acp` 不会出现在列表里，也不会被强行启动。
 
 `MEDIAPILOT_ACP_MODEL` 不是必须的，但 agent 的默认模型可能不可用。opencode 的
 默认模型由它自己的配置和远端目录决定，MediaPilot 不猜；要让语音任务稳定，显式选一个
@@ -159,7 +163,7 @@ MediaPilot 的配置。MediaPilot 只在 agent 发来请求时询问用户。
 {
   "type": "session.hello",
   "requestId": "c-1",
-  "protocolVersion": "0.6.3",
+  "protocolVersion": "0.6.4",
   "capabilities": ["realtime.audio-in", "realtime.audio-out", "realtime.workspace"],
   "workspace": "D:\\work\\beta"
 }

@@ -88,12 +88,33 @@ button:disabled {
   font-variant-numeric: tabular-nums;
 }
 
-.workspace {
+.settings {
   display: flex;
   gap: 0.5rem;
   align-items: center;
   flex-wrap: wrap;
   margin: 0.75rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.settings select {
+  flex: 1 1 16rem;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+}
+
+.workspace {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0.5rem 0 0;
   color: var(--muted);
   font-size: 0.9rem;
 }

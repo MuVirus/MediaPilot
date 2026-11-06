@@ -90,6 +90,8 @@ P3 已完成的事实：
 - ACP 工作目录支持会话级选择：客户端通过 `GET /api/fs/roots` 和 `GET /api/fs/list`
   浏览整个文件系统，在 `session.hello.workspace` 里提交绝对路径；网关校验存在性并
   解析为 `realpath`，不存在的路径会被拒绝。
+- 后端可在会话级选择：`/api/backends` 暴露 `llm` / `acp` / `none`，配置里的
+  `MEDIAPILOT_BACKEND` 只是默认值；不可用的 ACP 不会进入列表。
 
 退出条件：非开发者按 README 能在 10 分钟内跑起来并完成一次对话。
 

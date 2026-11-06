@@ -63,9 +63,12 @@ Browser / Native client
   目录属性，`gateway/fs_browse.mbt` 提供与客户端无关的目录浏览 API，`cmd/main` 只
   提供默认目录。客户端在 `session.hello` 里选目录，`BackendFactory` 把它传给
   backend，因此一个会话一个 agent 进程、一个固定目录。
+- 后端选择是“目录 + 工厂”：`gateway/backends.mbt` 保存可选的 id、标签和是否需要
+  工作目录，`session.hello.backend` 只能从中选择；`cmd/main` 负责把配置翻译成目录
+  和工厂。`GET /api/backends` 是客户端唯一的发现入口。
 - 鉴权在 WebSocket 升级前完成，`GET /api/health` 与静态资源保持开放；`GET
-  /api/fs/roots`、`GET /api/fs/list` 和实时连接使用同一个 token。token 只做准入，
-  不提供用户身份或多租户隔离。
+  /api/backends`、`GET /api/fs/roots`、`GET /api/fs/list` 和实时连接使用同一个
+  token。token 只做准入，不提供用户身份或多租户隔离。
 
 ## 为什么 provider 和 gateway 要分开
 

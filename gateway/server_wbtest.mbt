@@ -73,7 +73,7 @@ async test "Workspaces accepts any existing directory" {
   let base = @fs.tmpdir(prefix="mediapilot-workspace-")
   let child = @fs.realpath(base + "/child") catch { _ => base + "/child" }
   @fs.mkdir(child, recursive=true, allow_exist=true)
-  let workspaces = Workspaces::new(@fs.realpath("."), true)
+  let workspaces = Workspaces::new(@fs.realpath("."))
   match workspaces.resolve("") {
     Ok(path) => assert_true(path.length() > 0)
     Err(_) => fail("the default should resolve")
@@ -98,17 +98,49 @@ async test "Workspaces accepts any existing directory" {
 }
 
 ///|
-async test "Workspaces disabled rejects an explicit directory" {
+async test "Workspaces disabled has no default" {
   let workspaces = Workspaces::disabled()
-  assert_false(workspaces.is_enabled())
   match workspaces.resolve("") {
     Ok(path) => assert_eq(path, "")
     Err(_) => fail("the empty request should resolve to an empty default")
   }
-  match workspaces.resolve("/work/a") {
-    Ok(_) => fail("a disabled deployment must reject explicit workspaces")
+}
+
+///|
+test "BackendCatalog resolves defaults and rejects unknown ids" {
+  let catalog = BackendCatalog::new("llm", [
+    { id: "llm", label: "LLM", requires_workspace: false, },
+    { id: "acp", label: "ACP", requires_workspace: true, },
+    { id: "none", label: "none", requires_workspace: false, },
+  ])
+  assert_eq(catalog.default_id(), "llm")
+  match catalog.resolve("") {
+    Ok(entry) => assert_eq(entry.id, "llm")
+    Err(_) => fail("an empty id should select the default")
+  }
+  match catalog.resolve("acp") {
+    Ok(entry) => assert_true(entry.requires_workspace)
+    Err(_) => fail("acp should be available")
+  }
+  match catalog.resolve("ghost") {
+    Ok(_) => fail("an unknown backend must be rejected")
     Err(_) => ()
   }
+  assert_true(catalog.any_requires_workspace())
+}
+
+///|
+test "BackendCatalog payload lists ids and workspace requirements" {
+  let catalog = BackendCatalog::new("none", [
+    { id: "none", label: "none", requires_workspace: false, },
+  ])
+  assert_false(catalog.any_requires_workspace())
+  assert_eq(
+    catalog.payload(),
+    @json.parse(
+      "{\"default\":\"none\",\"backends\":[{\"id\":\"none\",\"label\":\"none\",\"requiresWorkspace\":false}]}",
+    ),
+  )
 }
 
 ///|
