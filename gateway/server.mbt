@@ -104,13 +104,25 @@ pub async fn serve(
     let path = route_path(request.path)
     match (request.meth, path) {
       (Get, "/api/health") => handle_health(conn, limiter)
-      (Get, "/api/workspaces") =>
+      (Get, "/api/fs/roots") =>
         if !request_authorized(request, auth_token) {
           respond(
             conn, 401, "Unauthorized", "application/json", "{\"error\":\"unauthorized\"}",
           )
         } else {
-          respond(conn, 200, "OK", "application/json", workspaces.json())
+          let payload = roots_payload(
+            workspaces.default_root(),
+            workspaces.is_enabled(),
+          )
+          respond(conn, 200, "OK", "application/json", payload.stringify())
+        }
+      (Get, "/api/fs/list") =>
+        if !request_authorized(request, auth_token) {
+          respond(
+            conn, 401, "Unauthorized", "application/json", "{\"error\":\"unauthorized\"}",
+          )
+        } else {
+          handle_fs_list(request, conn)
         }
       (Get, "/api/realtime") =>
         if !request_authorized(request, auth_token) {
@@ -174,13 +186,13 @@ fn request_token(request : @http.RequestHeader) -> String? {
 }
 
 ///|
-fn query_token(path : String) -> String? {
+fn query_param(path : String, key : String) -> String? {
   match path.find("?") {
     Some(index) => {
       for pair in path[index + 1:].split("&") {
         match pair.find("=") {
           Some(equals) =>
-            if pair[:equals] == "token" {
+            if pair[:equals] == key {
               return Some(pair[equals + 1:].to_owned())
             }
           None => ()
@@ -190,6 +202,11 @@ fn query_token(path : String) -> String? {
     }
     None => None
   }
+}
+
+///|
+fn query_token(path : String) -> String? {
+  query_param(path, "token")
 }
 
 ///|
@@ -203,6 +220,51 @@ fn request_authorized(request : @http.RequestHeader, expected : String) -> Bool 
     match request_token(request) {
       Some(token) => token == expected
       None => false
+    }
+  }
+}
+
+///|
+/// `GET /api/fs/list?path=...`. The query value is percent-decoded because
+/// browsers encode `D:\work` as `D%3A%5Cwork`.
+async fn handle_fs_list(
+  request : @http.RequestHeader,
+  conn : @http.ServerConnection,
+) -> Unit {
+  let raw = match query_param(request.path, "path") {
+    Some(value) => percent_decode(value)
+    None => {
+      respond(
+        conn, 400, "Bad Request", "application/json", "{\"error\":\"path is required\"}",
+      )
+      return
+    }
+  }
+  match list_directory(raw) {
+    Ok(listing) =>
+      respond(
+        conn,
+        200,
+        "OK",
+        "application/json",
+        listing.payload().stringify(),
+      )
+    Err(message) => {
+      let (code, reason) = if message.has_prefix("workspace does not exist") ||
+        message.has_prefix("workspace is not a directory") {
+        (404, "Not Found")
+      } else if message.has_prefix("cannot read directory") {
+        (403, "Forbidden")
+      } else {
+        (400, "Bad Request")
+      }
+      respond(
+        conn,
+        code,
+        reason,
+        "application/json",
+        Json::object({ "error": Json::string(message) }).stringify(),
+      )
     }
   }
 }

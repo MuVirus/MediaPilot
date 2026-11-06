@@ -59,13 +59,13 @@ Browser / Native client
   都直接报错退出。配置里的 secrets 只存在于内存，不打印。
 - `SessionLimiter` 由一次 `serve` 共享。`session.hello` 通过版本校验后占用一个名额，
   连接关闭时释放。超限的会话在握手阶段收到 `session_limit` 并关闭。
-- ACP 工作目录是进程级白名单 + 会话级选择：`gateway/workspace.mbt` 只做准入判断，
-  `cmd/main` 负责读取并校验配置，`gateway/` 不碰文件系统。客户端在 `session.hello`
-  里选一个目录，`BackendFactory` 把它传给 backend，因此一个会话一个 agent 进程、
-  一个固定目录。
+- ACP 工作目录是“会话说”：`gateway/workspace.mbt` 在握手时校验绝对路径、存在性和
+  目录属性，`gateway/fs_browse.mbt` 提供与客户端无关的目录浏览 API，`cmd/main` 只
+  提供默认目录。客户端在 `session.hello` 里选目录，`BackendFactory` 把它传给
+  backend，因此一个会话一个 agent 进程、一个固定目录。
 - 鉴权在 WebSocket 升级前完成，`GET /api/health` 与静态资源保持开放；`GET
-  /api/workspaces` 和实时连接使用同一个 token。token 只做准入，不提供用户身份或
-  多租户隔离。
+  /api/fs/roots`、`GET /api/fs/list` 和实时连接使用同一个 token。token 只做准入，
+  不提供用户身份或多租户隔离。
 
 ## 为什么 provider 和 gateway 要分开
 

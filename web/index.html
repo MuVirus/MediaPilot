@@ -20,12 +20,27 @@
         <button id="interrupt" type="button" disabled>打断</button>
       </div>
 
-      <label class="workspace">
-        工作目录
-        <select id="workspace">
-          <option value="">默认</option>
-        </select>
-      </label>
+      <div class="workspace">
+        <label for="workspace-path">工作目录</label>
+        <input id="workspace-path" type="text" readonly placeholder="默认" />
+        <button id="workspace-browse" type="button">浏览…</button>
+        <button id="workspace-reset" type="button">用默认</button>
+      </div>
+
+      <dialog id="dir-dialog">
+        <h2>选择工作目录</h2>
+        <div class="dir-toolbar">
+          <button id="dir-up" type="button">上级</button>
+          <select id="dir-roots" aria-label="磁盘"></select>
+        </div>
+        <p id="dir-path" class="dir-path"></p>
+        <ul id="dir-list" class="dir-list"></ul>
+        <p id="dir-error" class="dir-error hidden"></p>
+        <div class="controls">
+          <button id="dir-choose" type="button">选择此目录</button>
+          <button id="dir-cancel" type="button">取消</button>
+        </div>
+      </dialog>
 
       <p id="status" class="status">未连接</p>
 

@@ -1,34 +1,27 @@
 ///|
-/// The agent working directories this deployment allows, plus the directory a
-/// client gets when it does not ask for one.
+/// Workspace policy for one gateway process.
 ///
-/// A client can never name an arbitrary path: `resolve` only accepts the exact
-/// strings listed here. The list is fixed when the gateway starts; switching
-/// directories means closing the session and connecting again with another
-/// value.
+/// Clients may pick any existing absolute directory on the machine; there is no
+/// configured allowlist. `enabled` is false for deployments without an ACP
+/// backend, where a working directory has no meaning.
+///
+/// The choice is made in `session.hello` and fixed for the session. Switching
+/// directories means closing the connection and reconnecting.
 pub struct Workspaces {
-  roots : Array[String]
   default_root : String
+  enabled : Bool
 }
 
 ///|
 /// A deployment without workspace selection. `session.hello` must omit the
 /// field (or send `""`), and `session.ready` echoes `""`.
 pub fn Workspaces::disabled() -> Workspaces {
-  { roots: [], default_root: "", }
+  { default_root: "", enabled: false, }
 }
 
 ///|
-pub fn Workspaces::new(
-  roots : Array[String],
-  default_root : String,
-) -> Workspaces {
-  { roots, default_root, }
-}
-
-///|
-pub fn Workspaces::roots(self : Workspaces) -> Array[String] {
-  self.roots
+pub fn Workspaces::new(default_root : String, enabled : Bool) -> Workspaces {
+  { default_root, enabled, }
 }
 
 ///|
@@ -37,63 +30,27 @@ pub fn Workspaces::default_root(self : Workspaces) -> String {
 }
 
 ///|
-/// True when the deployment advertised at least one directory.
+/// True when the deployment uses agent working directories at all.
 pub fn Workspaces::is_enabled(self : Workspaces) -> Bool {
-  self.roots.length() > 0
+  self.enabled
 }
 
 ///|
-/// Trim surrounding whitespace and trailing separators so `D:\work\` and
-/// `D:\work` compare equal. The configured entry, not the request, is what a
-/// session receives.
-fn normalize_workspace(path : String) -> String {
-  let mut current = path.trim().to_owned()
-  while current.length() > 1 &&
-        (current.has_suffix("/") || current.has_suffix("\\")) {
-    current = current[:current.length() - 1].to_owned()
-  }
-  current
-}
-
-///|
-/// Resolve a client request. `""` selects the deployment default. A non-empty
-/// value must match one of the advertised directories.
-pub fn Workspaces::resolve(
+/// Resolve a client request to an absolute directory.
+///
+/// - `""` selects the deployment default (or `""` when disabled).
+/// - Any other value must be an absolute, existing directory.
+/// - Asking for a directory on a deployment that has no workspaces is denied.
+pub async fn Workspaces::resolve(
   self : Workspaces,
   requested : String,
 ) -> Result[String, String] {
-  if requested.trim() == "" {
-    return Ok(self.default_root)
+  let trimmed = requested.trim().to_owned()
+  if trimmed == "" {
+    return if self.enabled { Ok(self.default_root) } else { Ok("") }
   }
-  let wanted = normalize_workspace(requested)
-  for root in self.roots {
-    if normalize_workspace(root) == wanted {
-      return Ok(root)
-    }
+  if !self.enabled {
+    return Err("this deployment does not use agent working directories")
   }
-  Err(
-    "workspace is not allowed; choose one of the directories from GET /api/workspaces",
-  )
-}
-
-///|
-/// The `GET /api/workspaces` body.
-///
-/// These are filesystem paths, so the route is gated by the same token as
-/// `/api/realtime` when one is configured. It never contains keys or session
-/// state.
-pub fn Workspaces::payload(self : Workspaces) -> Json {
-  let roots : Array[Json] = []
-  for root in self.roots {
-    roots.push(Json::string(root))
-  }
-  Json::object({
-    "default": Json::string(self.default_root),
-    "workspaces": Json::array(roots),
-  })
-}
-
-///|
-pub fn Workspaces::json(self : Workspaces) -> String {
-  self.payload().stringify()
+  resolve_directory(trimmed)
 }

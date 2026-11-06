@@ -174,43 +174,6 @@ pub fn parse_env_text(text : String) -> Array[(String, String)] {
 }
 
 ///|
-/// Split a `;`-separated list, trimming each entry and dropping blanks. Used for
-/// values such as the allowed agent working directories.
-pub fn split_list(text : String) -> Array[String] {
-  let values : Array[String] = []
-  for raw in text.split(";") {
-    let value = raw.trim().to_owned()
-    if value != "" {
-      values.push(value)
-    }
-  }
-  values
-}
-
-///|
-/// True for a POSIX absolute path, a Windows drive path (`C:\`, `C:/`), or a
-/// UNC path (`\\server\share`). Relative paths are rejected so a workspace
-/// never depends on the process directory.
-pub fn is_absolute_path(path : String) -> Bool {
-  let value = path.trim()
-  if value.has_prefix("/") || value.has_prefix("\\\\") {
-    return true
-  }
-  if value.length() < 3 {
-    return false
-  }
-  let drive = match value.get_char(0) {
-    Some(ch) => {
-      let code = ch.to_int()
-      (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
-    }
-    None => false
-  }
-  let separator = value[2:3]
-  drive && value[1:2] == ":" && (separator == "/" || separator == "\\")
-}
-
-///|
 /// Parse a strictly positive decimal integer. Used for limits so a malformed
 /// value produces a clear startup error instead of a surprising `0`.
 pub fn parse_positive_int(text : String) -> Int32? {

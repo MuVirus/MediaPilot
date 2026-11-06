@@ -1142,13 +1142,14 @@ async fn hello_in(ws : @websocket.Conn, workspace : String) -> Unit {
 }
 
 ///|
-async test "hello accepts an allowlisted workspace and echoes it" {
+async test "hello accepts an existing directory and echoes it" {
+  let base = @fs.tmpdir(prefix="mediapilot-ws-")
+  let child = base + "/child"
+  @fs.mkdir(child, recursive=true, allow_exist=true)
+  let resolved = @fs.realpath(child + "/") catch { _ => child }
   let provider = FakeProvider::new()
   let seen : Array[String] = []
-  let workspaces = @gateway.Workspaces::new(
-    ["/work/alpha", "/work/beta"],
-    "/work/alpha",
-  )
+  let workspaces = @gateway.Workspaces::new(base, true)
   let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
   let port = server.addr.port()
   @async.with_task_group() <| group => {
@@ -1164,59 +1165,71 @@ async test "hello accepts an allowlisted workspace and echoes it" {
     @async.sleep(50)
     let ws = @websocket.connect("ws://127.0.0.1:\{port}/api/realtime")
     defer ws.close()
-    hello_in(ws, "/work/beta/")
+    hello_in(ws, child + "/")
     match read_event(ws) {
       Some(@protocol.ServerEvent::Ready(workspace~, ..)) =>
-        assert_eq(workspace, "/work/beta")
-      _ => fail("an allowlisted workspace should be accepted")
+        assert_eq(workspace, resolved)
+      _ => fail("an existing directory should be accepted")
     }
-    assert_eq(seen, ["/work/beta"])
+    assert_eq(seen, [resolved])
   }
+  @fs.rmdir(base, recursive=true, allow_missing=true)
 }
 
 ///|
 async test "hello without a workspace uses the configured default" {
+  let base = @fs.tmpdir(prefix="mediapilot-ws-")
+  let resolved = @fs.realpath(base) catch { _ => base }
   let provider = FakeProvider::new()
-  let workspaces = @gateway.Workspaces::new(
-    ["/work/alpha", "/work/beta"],
-    "/work/alpha",
-  )
+  let workspaces = @gateway.Workspaces::new(resolved, true)
   with_gateway_workspaces(provider, workspaces, "", async fn(port) {
     let ws = @websocket.connect("ws://127.0.0.1:\{port}/api/realtime")
     defer ws.close()
     hello(ws)
     match read_event(ws) {
       Some(@protocol.ServerEvent::Ready(workspace~, ..)) =>
-        assert_eq(workspace, "/work/alpha")
+        assert_eq(workspace, resolved)
       _ => fail("the default workspace should be announced")
     }
   })
+  @fs.rmdir(base, recursive=true, allow_missing=true)
 }
 
 ///|
-async test "hello rejects a workspace outside the allowlist" {
+async test "hello rejects missing and relative workspaces" {
+  let base = @fs.tmpdir(prefix="mediapilot-ws-")
   let provider = FakeProvider::new()
-  let workspaces = @gateway.Workspaces::new(["/work/alpha"], "/work/alpha")
+  let workspaces = @gateway.Workspaces::new(base, true)
   with_gateway_workspaces(provider, workspaces, "", async fn(port) {
-    let ws = @websocket.connect("ws://127.0.0.1:\{port}/api/realtime")
-    defer ws.close()
-    hello_in(ws, "/etc")
-    match read_event(ws) {
+    let missing = @websocket.connect("ws://127.0.0.1:\{port}/api/realtime")
+    hello_in(missing, base + "/does-not-exist")
+    match read_event(missing) {
       Some(@protocol.ServerEvent::Error(code~, retryable~, ..)) => {
         assert_eq(code, @protocol.ErrorCode::WorkspaceDenied)
         assert_false(retryable)
       }
-      _ => fail("a workspace outside the allowlist should be rejected")
+      _ => fail("a missing directory should be rejected")
     }
+    missing.close()
+    let relative = @websocket.connect("ws://127.0.0.1:\{port}/api/realtime")
+    hello_in(relative, "relative/path")
+    match read_event(relative) {
+      Some(@protocol.ServerEvent::Error(code~, ..)) =>
+        assert_eq(code, @protocol.ErrorCode::WorkspaceDenied)
+      _ => fail("a relative path should be rejected")
+    }
+    relative.close()
   })
+  @fs.rmdir(base, recursive=true, allow_missing=true)
 }
 
 ///|
-async test "workspaces endpoint requires the configured token" {
+async test "filesystem roots require the token and report the default" {
+  let base = @fs.tmpdir(prefix="mediapilot-ws-")
   let provider = FakeProvider::new()
-  let workspaces = @gateway.Workspaces::new(["/work/alpha"], "/work/alpha")
+  let workspaces = @gateway.Workspaces::new(base, true)
   with_gateway_workspaces(provider, workspaces, "secret", async fn(port) {
-    let url = "http://127.0.0.1:\{port}/api/workspaces"
+    let url = "http://127.0.0.1:\{port}/api/fs/roots"
     let (anonymous, _) = @http.get_text(url)
     assert_eq(anonymous.code, 401)
     let (authorized, body) = @http.get_text(
@@ -1224,12 +1237,54 @@ async test "workspaces endpoint requires the configured token" {
       headers=Map([("Authorization", "Bearer secret")]),
     )
     assert_eq(authorized.code, 200)
-    let parsed = @json.parse(body)
+    let map = match @json.parse(body) {
+      @json.Json::Object(map) => map
+      _ => fail("roots response must be an object")
+    }
     assert_eq(
-      parsed,
-      @json.parse(
-        "{\"default\":\"/work/alpha\",\"workspaces\":[\"/work/alpha\"]}",
-      ),
+      map.get("default"),
+      Some(@json.Json::string(@fs.realpath(base) catch { _ => base })),
     )
+    assert_eq(map.get("enabled"), Some(@json.Json::boolean(true)))
+    match map.get("roots") {
+      Some(@json.Json::Array(roots)) => assert_true(roots.length() > 0)
+      _ => fail("roots must be a non-empty array")
+    }
   })
+  @fs.rmdir(base, recursive=true, allow_missing=true)
+}
+
+///|
+async test "filesystem listing returns sorted subdirectories" {
+  let base = @fs.tmpdir(prefix="mediapilot-ws-")
+  @fs.mkdir(base + "/beta", recursive=true, allow_exist=true)
+  @fs.mkdir(base + "/alpha", recursive=true, allow_exist=true)
+  @fs.write_text(base + "/file.txt", "x")
+  let provider = FakeProvider::new()
+  let workspaces = @gateway.Workspaces::new(base, true)
+  with_gateway_workspaces(provider, workspaces, "", async fn(port) {
+    let query = (base + "/").replace_all(old="\\", new="/")
+    let url = "http://127.0.0.1:\{port}/api/fs/list?path=" + query
+    let (response, body) = @http.get_text(url)
+    assert_eq(response.code, 200)
+    let map = match @json.parse(body) {
+      @json.Json::Object(map) => map
+      _ => fail("listing response must be an object")
+    }
+    let entries = match map.get("entries") {
+      Some(@json.Json::Array(items)) => items
+      _ => fail("entries must be an array")
+    }
+    assert_eq(entries.length(), 2)
+    let first = match entries[0] {
+      @json.Json::Object(entry) => entry
+      _ => fail("entry must be an object")
+    }
+    assert_eq(first.get("name"), Some(@json.Json::string("alpha")))
+    let (missing_path, _) = @http.get_text(
+      "http://127.0.0.1:\{port}/api/fs/list",
+    )
+    assert_eq(missing_path.code, 400)
+  })
+  @fs.rmdir(base, recursive=true, allow_missing=true)
 }

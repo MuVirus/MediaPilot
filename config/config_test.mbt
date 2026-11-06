@@ -84,21 +84,3 @@ async test "load_from reads the local config root" {
   assert_eq(loaded.get("TEST_HOME_ONLY"), Some("home only"))
   @fs.rmdir(base, recursive=true, allow_missing=true)
 }
-
-///|
-test "split_list trims entries and drops blanks" {
-  assert_eq(@config.split_list("a;b ; ;c"), ["a", "b", "c"])
-  assert_eq(@config.split_list(""), [])
-}
-
-///|
-test "is_absolute_path accepts drive, UNC, and POSIX paths" {
-  assert_true(@config.is_absolute_path("C:/work"))
-  assert_true(@config.is_absolute_path("C:\\work"))
-  assert_true(@config.is_absolute_path("/home/user"))
-  assert_true(@config.is_absolute_path("\\\\server\\share"))
-  assert_false(@config.is_absolute_path("work"))
-  assert_false(@config.is_absolute_path("./work"))
-  assert_false(@config.is_absolute_path("../work"))
-  assert_false(@config.is_absolute_path("C:"))
-}

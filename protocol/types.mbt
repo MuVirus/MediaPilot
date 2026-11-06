@@ -4,7 +4,7 @@
 /// Additive changes bump the patch; reserve minor bumps for coordinated
 /// milestones. Any breaking change to a client-visible event or field bumps the
 /// major. See `docs/contract.md`.
-pub let protocol_version : String = "0.6.2"
+pub let protocol_version : String = "0.6.3"
 
 ///|
 /// Capability IDs are the only stable feature check for clients.
@@ -37,9 +37,9 @@ pub let capability_task : String = "realtime.task"
 pub let capability_permission : String = "realtime.permission"
 
 ///|
-/// The client may ask for a specific agent working directory in
-/// `session.hello`, chosen from the list the gateway advertises at
-/// `GET /api/workspaces`. The directory is fixed for the session.
+/// The client may choose the agent working directory in `session.hello`. It can
+/// enumerate directories through the gateway (`GET /api/fs/roots` and
+/// `GET /api/fs/list`). The directory is fixed for the session.
 pub let capability_workspace : String = "realtime.workspace"
 
 ///|
@@ -72,8 +72,9 @@ pub(all) enum ErrorCode {
   ProviderUnavailable
   ProviderAuthFailed
   SessionLimit
-  /// The requested `workspace` is not one of the directories the gateway
-  /// allows. The session is not created.
+  /// The requested `workspace` is not an absolute, existing directory, or the
+  /// deployment does not use agent working directories. The session is not
+  /// created.
   WorkspaceDenied
   InternalError
   Unknown(String)
@@ -122,8 +123,9 @@ pub fn ErrorCode::from_code(code : String) -> ErrorCode {
 #derive(Eq, Debug)
 pub(all) enum ClientEvent {
   /// `workspace` selects the agent working directory for this session. An
-  /// empty string asks for the deployment default. The value must match one of
-  /// the directories advertised by `GET /api/workspaces`.
+  /// empty string asks for the deployment default. Any other value must be an
+  /// absolute, existing directory; the gateway resolves it before starting the
+  /// agent.
   Hello(
     request_id~ : String,
     protocol_version~ : String,

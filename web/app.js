@@ -27,7 +27,17 @@ const els = {
   agentState: document.getElementById("agent-state"),
   agentStep: document.getElementById("agent-step"),
   agentText: document.getElementById("agent-text"),
-  workspace: document.getElementById("workspace"),
+  workspacePath: document.getElementById("workspace-path"),
+  workspaceBrowse: document.getElementById("workspace-browse"),
+  workspaceReset: document.getElementById("workspace-reset"),
+  dirDialog: document.getElementById("dir-dialog"),
+  dirUp: document.getElementById("dir-up"),
+  dirRoots: document.getElementById("dir-roots"),
+  dirPath: document.getElementById("dir-path"),
+  dirList: document.getElementById("dir-list"),
+  dirError: document.getElementById("dir-error"),
+  dirChoose: document.getElementById("dir-choose"),
+  dirCancel: document.getElementById("dir-cancel"),
 };
 
 let ws = null;
@@ -52,7 +62,11 @@ let permissionRequestId = "";
 let permissionTimer = null;
 let agentStartedAt = 0;
 let agentTimer = null;
-let workspaceSelectable = false;
+let workspaceEnabled = false;
+let workspaceDefault = "";
+let workspacePath = "";
+let pickerPath = "";
+let pickerParent = null;
 
 function log(message) {
   const line = `${new Date().toLocaleTimeString()} ${message}`;
@@ -79,7 +93,9 @@ function setRunning(value) {
   els.start.disabled = value;
   els.stop.disabled = !value;
   els.interrupt.disabled = !value;
-  if (els.workspace) els.workspace.disabled = value || !workspaceSelectable;
+  const workspaceLocked = value || !workspaceEnabled;
+  els.workspaceBrowse.disabled = workspaceLocked;
+  els.workspaceReset.disabled = workspaceLocked;
 }
 
 function base64ToBytes(base64) {
@@ -353,43 +369,121 @@ function socketUrl() {
   return `${scheme}://${location.host}/api/realtime${query}`;
 }
 
-// The gateway decides which directories are allowed. The client only offers
-// those values and sends the chosen one in `session.hello`.
-async function loadWorkspaces() {
-  if (!els.workspace) return;
+function authHeaders() {
   const token = authToken();
-  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url, { headers: authHeaders() });
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const body = await response.json();
+      if (body.error) detail = body.error;
+    } catch {
+      // The body is not JSON; keep the status text.
+    }
+    throw new Error(detail);
+  }
+  return response.json();
+}
+
+// The gateway owns the filesystem view; the page only renders what
+// `/api/fs/roots` and `/api/fs/list` return. Other clients (desktop, TUI) use
+// the same two endpoints.
+function showWorkspace(path) {
+  workspacePath = path || "";
+  els.workspacePath.value = workspacePath;
+  els.workspacePath.placeholder = workspaceDefault
+    ? `默认（${workspaceDefault}）`
+    : "默认";
+}
+
+async function initWorkspace() {
   try {
-    const response = await fetch("/api/workspaces", { headers });
-    if (!response.ok) {
-      workspaceSelectable = false;
-      els.workspace.disabled = true;
-      log(`workspaces unavailable (HTTP ${response.status})`);
-      return;
-    }
-    const data = await response.json();
-    els.workspace.textContent = "";
-    const fallback = document.createElement("option");
-    fallback.value = "";
-    fallback.textContent = data.default ? `默认（${data.default}）` : "默认";
-    els.workspace.appendChild(fallback);
-    for (const path of data.workspaces || []) {
-      const option = document.createElement("option");
-      option.value = path;
-      option.textContent = path;
-      els.workspace.appendChild(option);
-    }
-    if (!data.workspaces || data.workspaces.length === 0) {
-      workspaceSelectable = false;
-      els.workspace.disabled = true;
-    } else {
-      workspaceSelectable = true;
-      els.workspace.disabled = running;
+    const data = await fetchJson("/api/fs/roots");
+    workspaceEnabled = Boolean(data.enabled);
+    workspaceDefault = data.default || "";
+    showWorkspace("");
+    els.workspaceBrowse.disabled = !workspaceEnabled;
+    els.workspaceReset.disabled = !workspaceEnabled;
+    if (!workspaceEnabled) {
+      els.workspacePath.placeholder = "未启用（backend 不是 acp）";
     }
   } catch (error) {
-    workspaceSelectable = false;
-    els.workspace.disabled = true;
-    log(`workspaces load failed: ${error}`);
+    workspaceEnabled = false;
+    els.workspaceBrowse.disabled = true;
+    els.workspaceReset.disabled = true;
+    log(`workspace unavailable: ${error.message}`);
+  }
+}
+
+function setDirError(message) {
+  if (!message) {
+    els.dirError.textContent = "";
+    els.dirError.classList.add("hidden");
+    return;
+  }
+  els.dirError.textContent = message;
+  els.dirError.classList.remove("hidden");
+}
+
+async function loadRoots() {
+  const data = await fetchJson("/api/fs/roots");
+  els.dirRoots.textContent = "";
+  for (const root of data.roots || []) {
+    const option = document.createElement("option");
+    option.value = root.path;
+    option.textContent = root.name || root.path;
+    els.dirRoots.appendChild(option);
+  }
+  return data;
+}
+
+async function listDirectory(path) {
+  setDirError("");
+  let data;
+  try {
+    const query = new URLSearchParams({ path });
+    data = await fetchJson(`/api/fs/list?${query}`);
+  } catch (error) {
+    setDirError(error.message);
+    return;
+  }
+  pickerPath = data.path;
+  pickerParent = data.parent || null;
+  els.dirPath.textContent = data.path;
+  els.dirUp.disabled = !pickerParent;
+  els.dirList.textContent = "";
+  for (const entry of data.entries || []) {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "dir-entry";
+    button.textContent = entry.name;
+    button.addEventListener("click", () => listDirectory(entry.path));
+    item.appendChild(button);
+    els.dirList.appendChild(item);
+  }
+  if (data.truncated) {
+    setDirError("目录条目过多，只显示前 1000 项；请选择更具体的目录。");
+  }
+}
+
+async function openDirectoryPicker() {
+  if (!els.dirDialog.open) els.dirDialog.showModal();
+  setDirError("");
+  try {
+    const data = await loadRoots();
+    const start = workspacePath || data.default || (data.roots[0] || {}).path;
+    if (start) {
+      await listDirectory(start);
+    } else {
+      setDirError("没有可浏览的根目录");
+    }
+  } catch (error) {
+    setDirError(error.message);
   }
 }
 
@@ -401,7 +495,7 @@ function connectSocket() {
     send({
       type: "session.hello",
       requestId: `c-${Date.now()}`,
-      protocolVersion: "0.6.2",
+      protocolVersion: "0.6.3",
       capabilities: [
         "realtime.audio-in",
         "realtime.audio-out",
@@ -412,7 +506,7 @@ function connectSocket() {
         "realtime.permission",
         "realtime.workspace",
       ],
-      workspace: els.workspace ? els.workspace.value : "",
+      workspace: workspacePath,
     });
     log("socket open, hello sent");
     setStatus("握手中…");
@@ -571,7 +665,30 @@ document.getElementById("deny").addEventListener("click", () => {
   answerPermission("deny");
 });
 
-loadWorkspaces();
+els.workspaceBrowse.addEventListener("click", () => {
+  openDirectoryPicker().catch((error) => log(`picker failed: ${error}`));
+});
+els.workspaceReset.addEventListener("click", () => {
+  showWorkspace("");
+  log("workspace reset to default");
+});
+els.dirUp.addEventListener("click", () => {
+  if (pickerParent) listDirectory(pickerParent);
+});
+els.dirRoots.addEventListener("change", () => {
+  listDirectory(els.dirRoots.value);
+});
+els.dirChoose.addEventListener("click", () => {
+  if (!pickerPath) return;
+  showWorkspace(pickerPath);
+  els.dirDialog.close();
+  log(`workspace selected: ${pickerPath}`);
+});
+els.dirCancel.addEventListener("click", () => {
+  els.dirDialog.close();
+});
+
+initWorkspace();
 
 // Debug hook for the headless smoke test and for manual poking in devtools.
 // Not part of the gateway contract.

@@ -17,17 +17,35 @@ pub let default_max_tasks_per_session : Int32
 
 pub fn delegate_task_tool() -> @json.Json
 
+pub async fn filesystem_roots() -> Array[FilesystemEntry]
+
+pub let fs_entry_limit : Int32
+
 pub fn get_agent_task_status_tool() -> @json.Json
 
 pub fn health_json(limiter? : SessionLimiter) -> String
 
 pub fn health_payload(limiter? : SessionLimiter) -> @json.Json
 
+pub fn is_absolute_path(String) -> Bool
+
+pub fn join_entry_path(String, String) -> String
+
+pub async fn list_directory(String) -> Result[DirectoryListing, String]
+
 pub fn negotiate_capabilities(Array[String]) -> Array[String]
 
 pub let outbound_capacity : Int32
 
+pub fn parent_of(String) -> String?
+
+pub fn percent_decode(String) -> String
+
 pub let permission_timeout_ms : Int32
+
+pub async fn resolve_directory(String) -> Result[String, String]
+
+pub async fn roots_payload(String, Bool) -> @json.Json
 
 pub async fn run_gateway(String, async (String, @json.Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String, String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String, max_sessions? : Int32, max_tasks_per_session? : Int32, auth_token? : String, workspaces? : Workspaces) -> Unit
 
@@ -38,6 +56,19 @@ pub fn task_tools() -> Array[@json.Json]
 // Errors
 
 // Types and methods
+pub struct DirectoryListing {
+  path : String
+  parent : String?
+  entries : Array[FilesystemEntry]
+  truncated : Bool
+}
+pub fn DirectoryListing::payload(Self) -> @json.Json
+
+pub struct FilesystemEntry {
+  name : String
+  path : String
+}
+
 pub struct SessionLimiter {
   max : Int32
   active : @ref.Ref[Int32]
@@ -49,17 +80,14 @@ pub fn SessionLimiter::release(Self) -> Unit
 pub fn SessionLimiter::try_acquire(Self) -> Bool
 
 pub struct Workspaces {
-  roots : Array[String]
   default_root : String
+  enabled : Bool
 }
 pub fn Workspaces::default_root(Self) -> String
 pub fn Workspaces::disabled() -> Self
 pub fn Workspaces::is_enabled(Self) -> Bool
-pub fn Workspaces::json(Self) -> String
-pub fn Workspaces::new(Array[String], String) -> Self
-pub fn Workspaces::payload(Self) -> @json.Json
-pub fn Workspaces::resolve(Self, String) -> Result[String, String]
-pub fn Workspaces::roots(Self) -> Array[String]
+pub fn Workspaces::new(String, Bool) -> Self
+pub async fn Workspaces::resolve(Self, String) -> Result[String, String]
 
 // Type aliases
 pub type BackendFactory = async (String, String) -> Result[&@ports.BackendPort, @ports.ProviderFailure]
