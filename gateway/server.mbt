@@ -32,16 +32,50 @@ pub async fn run_gateway(
   open_provider : ProviderFactory,
   open_backend? : BackendFactory,
   static_root? : String,
+  max_sessions~ : Int32 = default_max_sessions,
+  max_tasks_per_session~ : Int32 = default_max_tasks_per_session,
+  auth_token~ : String = "",
 ) -> Unit {
   let addr = @socket.Addr::parse(bind)
   let server = @http.Server(addr)
   println("[gateway] listening on " + bind)
   match (open_backend, static_root) {
     (Some(backend), Some(root)) =>
-      serve(server, open_provider, open_backend=backend, static_root=root)
-    (Some(backend), None) => serve(server, open_provider, open_backend=backend)
-    (None, Some(root)) => serve(server, open_provider, static_root=root)
-    (None, None) => serve(server, open_provider)
+      serve(
+        server,
+        open_provider,
+        open_backend=backend,
+        static_root=root,
+        max_sessions~,
+        max_tasks_per_session~,
+        auth_token~,
+      )
+    (Some(backend), None) =>
+      serve(
+        server,
+        open_provider,
+        open_backend=backend,
+        max_sessions~,
+        max_tasks_per_session~,
+        auth_token~,
+      )
+    (None, Some(root)) =>
+      serve(
+        server,
+        open_provider,
+        static_root=root,
+        max_sessions~,
+        max_tasks_per_session~,
+        auth_token~,
+      )
+    (None, None) =>
+      serve(
+        server,
+        open_provider,
+        max_sessions~,
+        max_tasks_per_session~,
+        auth_token~,
+      )
   }
 }
 
@@ -53,15 +87,36 @@ pub async fn serve(
   open_provider : ProviderFactory,
   open_backend? : BackendFactory,
   static_root? : String,
+  max_sessions~ : Int32 = default_max_sessions,
+  max_tasks_per_session~ : Int32 = default_max_tasks_per_session,
+  auth_token~ : String = "",
 ) -> Unit {
+  let limiter = SessionLimiter::new(max_sessions)
   server.run_forever((request, conn) => {
-    match (request.meth, request.path) {
-      (Get, "/api/health") => handle_health(conn)
+    let path = route_path(request.path)
+    match (request.meth, path) {
+      (Get, "/api/health") => handle_health(conn, limiter)
       (Get, "/api/realtime") =>
-        match open_backend {
-          Some(backend) =>
-            handle_realtime(request, conn, open_provider, open_backend=backend)
-          None => handle_realtime(request, conn, open_provider)
+        if !request_authorized(request, auth_token) {
+          respond(
+            conn, 401, "Unauthorized", "application/json", "{\"error\":\"unauthorized\"}",
+          )
+        } else {
+          match open_backend {
+            Some(backend) =>
+              handle_realtime(
+                request,
+                conn,
+                open_provider,
+                limiter,
+                max_tasks_per_session,
+                open_backend=backend,
+              )
+            None =>
+              handle_realtime(
+                request, conn, open_provider, limiter, max_tasks_per_session,
+              )
+          }
         }
       (Get, path) =>
         match static_root {
@@ -71,6 +126,68 @@ pub async fn serve(
       _ => handle_not_found(conn)
     }
   })
+}
+
+///|
+/// The request target without its query string. Routing must not treat
+/// `?token=...` as part of the endpoint path.
+fn route_path(path : String) -> String {
+  match path.find("?") {
+    Some(index) => path[:index].to_owned()
+    None => path
+  }
+}
+
+///|
+/// Read the bearer token from `Authorization` or the `token` query parameter.
+/// Browsers cannot set an Authorization header on a WebSocket, so the query
+/// form is the one the bundled client uses.
+fn request_token(request : @http.RequestHeader) -> String? {
+  match request.headers.get(@http.CaseInsensitiveString("Authorization")) {
+    Some(value) if value.has_prefix("Bearer ") => {
+      let token = value[7:].trim().to_owned()
+      if token != "" {
+        Some(token)
+      } else {
+        query_token(request.path)
+      }
+    }
+    _ => query_token(request.path)
+  }
+}
+
+///|
+fn query_token(path : String) -> String? {
+  match path.find("?") {
+    Some(index) => {
+      for pair in path[index + 1:].split("&") {
+        match pair.find("=") {
+          Some(equals) =>
+            if pair[:equals] == "token" {
+              return Some(pair[equals + 1:].to_owned())
+            }
+          None => ()
+        }
+      }
+      None
+    }
+    None => None
+  }
+}
+
+///|
+/// An empty configured token disables authentication. Otherwise the client
+/// must present the same token; a mismatch is rejected before the WebSocket
+/// upgrade so the process never allocates a session for it.
+fn request_authorized(request : @http.RequestHeader, expected : String) -> Bool {
+  if expected == "" {
+    true
+  } else {
+    match request_token(request) {
+      Some(token) => token == expected
+      None => false
+    }
+  }
 }
 
 ///|
@@ -102,8 +219,11 @@ async fn respond(
 }
 
 ///|
-async fn handle_health(conn : @http.ServerConnection) -> Unit {
-  respond(conn, 200, "OK", "application/json", health_json())
+async fn handle_health(
+  conn : @http.ServerConnection,
+  limiter : SessionLimiter,
+) -> Unit {
+  respond(conn, 200, "OK", "application/json", health_json(limiter~))
 }
 
 ///|
@@ -173,6 +293,8 @@ async fn handle_realtime(
   request : @http.RequestHeader,
   conn : @http.ServerConnection,
   open_provider : ProviderFactory,
+  limiter : SessionLimiter,
+  max_tasks_per_session : Int32,
   open_backend? : BackendFactory,
 ) -> Unit {
   let ws = @websocket.from_http_server(request, conn) catch {
@@ -220,6 +342,18 @@ async fn handle_realtime(
     )
     return
   }
+  if !limiter.try_acquire() {
+    send_error(
+      ws,
+      @protocol.ErrorCode::SessionLimit,
+      "session limit reached (max " +
+      limiter.max().to_string() +
+      "); retry after another session closes",
+      true,
+    )
+    return
+  }
+  defer limiter.release()
   let session_id = next_session_id()
   let backend = match open_backend {
     Some(factory) =>
@@ -236,7 +370,7 @@ async fn handle_realtime(
     None => None
   }
   let tools = match backend {
-    Some(_) => Some(Json::array([delegate_task_tool()]))
+    Some(_) => Some(Json::array(task_tools()))
     None => None
   }
   let provider = match open_provider(session_id, tools) {
@@ -260,7 +394,7 @@ async fn handle_realtime(
       capabilities~,
     ),
   )
-  bridge(ws, provider, session_id, capabilities, backend)
+  bridge(ws, provider, session_id, capabilities, max_tasks_per_session, backend)
   provider.close()
   match backend {
     Some(backend) => backend.close() catch { _ => () }
@@ -296,6 +430,79 @@ pub fn delegate_task_tool() -> Json {
       }),
     }),
   })
+}
+
+///|
+/// Ask the coordinator to report the latest state of a delegated task.
+pub fn get_agent_task_status_tool() -> Json {
+  Json::object({
+    "type": Json::string("function"),
+    "function": Json::object({
+      "name": Json::string("get_agent_task_status"),
+      "description": Json::string(
+        "Look up the latest state of work previously accepted by delegate_task. Use this when the user asks how it is going or what the result was. Do not guess a task id; omit it to read the most recent task.",
+      ),
+      "parameters": Json::object({
+        "type": Json::string("object"),
+        "properties": Json::object({
+          "task_id": Json::object({
+            "type": Json::string("string"),
+            "description": Json::string(
+              "A task id returned by delegate_task or an earlier status result. Omit to use the most recent task.",
+            ),
+          }),
+          "list_all": Json::object({
+            "type": Json::string("boolean"),
+            "description": Json::string(
+              "Set true to list the recent tasks in this session instead of one task.",
+            ),
+          }),
+        }),
+        "required": Json::array([]),
+        "additionalProperties": Json::boolean(false),
+      }),
+    }),
+  })
+}
+
+///|
+/// Ask the coordinator to cancel one task or all work in this session.
+pub fn cancel_agent_task_tool() -> Json {
+  Json::object({
+    "type": Json::string("function"),
+    "function": Json::object({
+      "name": Json::string("cancel_agent_task"),
+      "description": Json::string(
+        "Cancel work previously accepted by delegate_task. Use this when the user explicitly asks to stop or abandon it. Omit task_id to cancel the currently running task; set all=true to cancel every queued and running task in this session.",
+      ),
+      "parameters": Json::object({
+        "type": Json::string("object"),
+        "properties": Json::object({
+          "task_id": Json::object({
+            "type": Json::string("string"),
+            "description": Json::string(
+              "The task to cancel. Omit to cancel the currently running task.",
+            ),
+          }),
+          "all": Json::object({
+            "type": Json::string("boolean"),
+            "description": Json::string(
+              "Set true to cancel every running and queued task in this session.",
+            ),
+          }),
+        }),
+        "required": Json::array([]),
+        "additionalProperties": Json::boolean(false),
+      }),
+    }),
+  })
+}
+
+///|
+/// Every tool offered when an agent backend is configured. Order is stable so
+/// provider request snapshots are easy to compare.
+pub fn task_tools() -> Array[Json] {
+  [delegate_task_tool(), get_agent_task_status_tool(), cancel_agent_task_tool()]
 }
 
 ///|
@@ -348,6 +555,16 @@ priv struct PermissionAnswer {
 }
 
 ///|
+/// The latest state of one delegated task. Kept for status queries and for
+/// making cancellation idempotent.
+priv struct TaskRecord {
+  task_id : String
+  status : String
+  text : String
+  step : String
+}
+
+///|
 /// State shared by the two pumps of one client session.
 priv struct SessionFlow {
   outbound : @aqueue.Queue[@protocol.ServerEvent?]
@@ -365,6 +582,11 @@ priv struct SessionFlow {
   /// True when the client advertised `realtime.permission`, so the gateway may
   /// ask. A client that did not is denied by policy instead of waiting.
   can_ask : Bool
+  /// Latest state by task id. Replaced on every update so a status tool call
+  /// sees the same facts the client last saw.
+  tasks : Ref[Map[String, TaskRecord]]
+  /// Task ids in acceptance order, used to find the most recent task.
+  task_order : Ref[Array[String]]
 }
 
 ///|
@@ -393,6 +615,19 @@ async fn SessionFlow::task_updated(
   text : String,
   step : String,
 ) -> Unit {
+  let existing = self.tasks.val.get(task_id)
+  // Once cancelled, late running/completed updates must not resurrect the task
+  // or overwrite the final cancellation state.
+  match existing {
+    Some(record) if record.status == "cancelled" && status != "cancelled" =>
+      return
+    _ => ()
+  }
+  self.tasks.val.set(task_id, { task_id, status, text, step, })
+  match existing {
+    Some(_) => ()
+    None => self.task_order.val.push(task_id)
+  }
   self.outbound.put(
     Some(
       @protocol.ServerEvent::TaskUpdated(
@@ -404,6 +639,51 @@ async fn SessionFlow::task_updated(
       ),
     ),
   )
+}
+
+///|
+fn SessionFlow::task_status(self : SessionFlow, task_id : String) -> String? {
+  match self.tasks.val.get(task_id) {
+    Some(record) => Some(record.status)
+    None => None
+  }
+}
+
+///|
+fn SessionFlow::is_cancelled(self : SessionFlow, task_id : String) -> Bool {
+  match self.task_status(task_id) {
+    Some(status) => status == "cancelled"
+    None => false
+  }
+}
+
+///|
+fn SessionFlow::latest_task_id(self : SessionFlow) -> String? {
+  let order = self.task_order.val
+  let mut index = order.length() - 1
+  while index >= 0 {
+    let task_id = order[index]
+    if self.tasks.val.contains(task_id) {
+      return Some(task_id)
+    }
+    index = index - 1
+  }
+  None
+}
+
+///|
+fn SessionFlow::latest_running_task_id(self : SessionFlow) -> String? {
+  let order = self.task_order.val
+  let mut index = order.length() - 1
+  while index >= 0 {
+    let task_id = order[index]
+    match self.tasks.val.get(task_id) {
+      Some(record) if record.status == "running" => return Some(task_id)
+      _ => ()
+    }
+    index = index - 1
+  }
+  None
 }
 
 ///|
@@ -420,6 +700,7 @@ async fn bridge(
   provider : &@ports.RealtimeProvider,
   session_id : String,
   capabilities : Array[String],
+  max_tasks_per_session : Int32,
   backend : &@ports.BackendPort?,
 ) -> Unit {
   let outbound : @aqueue.Queue[@protocol.ServerEvent?] = @aqueue.Queue(
@@ -430,7 +711,14 @@ async fn bridge(
   // reported back as a retryable error.
   let client_closing : Ref[Bool] = Ref(false)
   // Accepted tasks wait here so the provider reader never blocks on one.
-  let tool_jobs : @aqueue.Queue[TaskJob?] = @aqueue.Queue(kind=Blocking(4))
+  let task_capacity = if max_tasks_per_session > 0 {
+    max_tasks_per_session
+  } else {
+    default_max_tasks_per_session
+  }
+  let tool_jobs : @aqueue.Queue[TaskJob?] = @aqueue.Queue(
+    kind=Blocking(task_capacity),
+  )
   let flow : SessionFlow = {
     outbound,
     session_id,
@@ -440,6 +728,8 @@ async fn bridge(
     interrupt_generation: Ref(0),
     session_allow: Ref(false),
     can_ask: capabilities.contains(@protocol.capability_permission),
+    tasks: Ref(Map([])),
+    task_order: Ref([]),
   }
   @async.with_task_group() <| group => {
     // Prepare the backend while the user is still talking, so the first
@@ -666,50 +956,76 @@ async fn provider_pump(
     match provider.next_event() {
       Some(@ports.RealtimeEvent::Forward(event~)) =>
         flow.outbound.put(Some(event))
-      Some(@ports.RealtimeEvent::ToolCall(call_id~, name~, arguments~)) => {
-        if name != "delegate_task" {
-          provider.send_tool_result(
-            call_id,
-            tool_error("unknown tool: " + name),
-            true,
-          )
-          continue
-        }
-        let instruction = match tool_instruction(arguments) {
-          Some(text) => text
-          None => {
+      Some(@ports.RealtimeEvent::ToolCall(call_id~, name~, arguments~)) =>
+        match name {
+          "delegate_task" => {
+            let instruction = match tool_instruction(arguments) {
+              Some(text) => text
+              None => {
+                provider.send_tool_result(
+                  call_id,
+                  tool_error("delegate_task requires a non-empty instruction"),
+                  true,
+                )
+                continue
+              }
+            }
+            match backend {
+              None =>
+                provider.send_tool_result(
+                  call_id,
+                  tool_error(
+                    "no backend is configured, so the task cannot be delegated",
+                  ),
+                  true,
+                )
+              Some(_) => {
+                task_seq = task_seq + 1
+                let task_id = "t-" + task_seq.to_string()
+                let job = {
+                  task_id,
+                  instruction,
+                  generation: flow.interrupt_generation.val,
+                }
+                let queued = tool_jobs.try_put(Some(job)) catch { _ => false }
+                if queued {
+                  flow.task_updated(task_id, "running", "", "")
+                  provider.send_tool_result(
+                    call_id,
+                    tool_accepted(task_id),
+                    true,
+                  )
+                } else {
+                  provider.send_tool_result(
+                    call_id,
+                    tool_error(
+                      "too many queued tasks; wait for the current task to finish or cancel it first",
+                    ),
+                    true,
+                  )
+                }
+              }
+            }
+          }
+          "get_agent_task_status" =>
             provider.send_tool_result(
               call_id,
-              tool_error("delegate_task requires a non-empty instruction"),
+              task_status_output(flow, arguments),
               true,
             )
-            continue
-          }
-        }
-        match backend {
-          None =>
+          "cancel_agent_task" =>
             provider.send_tool_result(
               call_id,
-              tool_error(
-                "no backend is configured, so the task cannot be delegated",
-              ),
+              cancel_task_output(flow, backend, arguments),
               true,
             )
-          Some(_) => {
-            task_seq = task_seq + 1
-            let task_id = "t-" + task_seq.to_string()
-            flow.task_updated(task_id, "running", "", "")
-            tool_jobs.put(
-              Some({
-                task_id,
-                instruction,
-                generation: flow.interrupt_generation.val,
-              }),
+          _ =>
+            provider.send_tool_result(
+              call_id,
+              tool_error("unknown tool: " + name),
+              true,
             )
-            provider.send_tool_result(call_id, tool_accepted(task_id), true)
-          }
         }
-      }
       None => {
         if !client_closing.val {
           flow.outbound.put(
@@ -749,6 +1065,219 @@ fn tool_accepted(task_id : String) -> String {
       "任务已受理并在后台执行。请用一句简短自然的口语告诉用户你正在处理，不要声称已经完成，也不要为同一请求再次调用 delegate_task。",
     ),
   }).stringify()
+}
+
+///|
+/// Parse tool arguments into an object. Malformed input yields an empty map so
+/// every tool has one predictable error path.
+fn tool_arguments(arguments : String) -> Map[String, Json] {
+  let parsed = @json.parse(arguments) catch { _ => return Map([]) }
+  match parsed {
+    Json::Object(map) => map
+    _ => Map([])
+  }
+}
+
+///|
+fn tool_string_arg(args : Map[String, Json], key : String) -> String? {
+  match args.get(key) {
+    Some(Json::String(value)) if value.trim() != "" => Some(value)
+    _ => None
+  }
+}
+
+///|
+fn tool_bool_arg(args : Map[String, Json], key : String) -> Bool {
+  match args.get(key) {
+    Some(Json::True) => true
+    _ => false
+  }
+}
+
+///|
+fn truncate_text(text : String, limit : Int32) -> String {
+  if text.length() <= limit {
+    text
+  } else {
+    text[:limit].to_owned() + "…"
+  }
+}
+
+///|
+fn task_record_json(record : TaskRecord) -> Json {
+  Json::object({
+    "taskId": Json::string(record.task_id),
+    "state": Json::string(record.status),
+    "text": Json::string(record.text),
+    "step": Json::string(record.step),
+  })
+}
+
+///|
+fn task_spoken_message(record : TaskRecord) -> String {
+  match record.status {
+    "running" =>
+      "任务 " +
+      record.task_id +
+      " 正在执行" +
+      (if record.step == "" {
+        "。"
+      } else {
+        "，当前步骤：" + record.step + "。"
+      })
+    "completed" =>
+      "任务 " +
+      record.task_id +
+      " 已完成。结果：" +
+      truncate_text(record.text, 500)
+    "failed" =>
+      "任务 " +
+      record.task_id +
+      " 失败：" +
+      truncate_text(record.text, 500)
+    "cancelled" => "任务 " + record.task_id + " 已取消。"
+    _ => "任务 " + record.task_id + " 的状态是 " + record.status + "。"
+  }
+}
+
+///|
+/// Tool result for `get_agent_task_status`.
+fn task_status_output(flow : SessionFlow, arguments : String) -> String {
+  let args = tool_arguments(arguments)
+  let result : Map[String, Json] = Map([])
+  if tool_bool_arg(args, "list_all") {
+    let items : Array[Json] = []
+    let order = flow.task_order.val
+    let start = if order.length() > 20 { order.length() - 20 } else { 0 }
+    for index in start..<order.length() {
+      match flow.tasks.val.get(order[index]) {
+        Some(record) => items.push(task_record_json(record))
+        None => ()
+      }
+    }
+    result.set("status", Json::string("ok"))
+    result.set("tasks", Json::array(items))
+    result.set(
+      "message",
+      Json::string(
+        "已返回最近 " + items.length().to_string() + " 项任务。",
+      ),
+    )
+    return Json::object(result).stringify()
+  }
+  let target = match tool_string_arg(args, "task_id") {
+    Some(task_id) => Some(task_id)
+    None => flow.latest_task_id()
+  }
+  match target {
+    Some(task_id) =>
+      match flow.tasks.val.get(task_id) {
+        Some(record) => {
+          result.set("status", Json::string("ok"))
+          result.set("task", task_record_json(record))
+          result.set("message", Json::string(task_spoken_message(record)))
+          Json::object(result).stringify()
+        }
+        None => {
+          result.set("status", Json::string("not_found"))
+          result.set(
+            "message",
+            Json::string(
+              "没有找到任务 " + task_id + "，不要猜测任务状态。",
+            ),
+          )
+          Json::object(result).stringify()
+        }
+      }
+    None => {
+      result.set("status", Json::string("none"))
+      result.set(
+        "message",
+        Json::string("当前会话还没有创建过任务。"),
+      )
+      Json::object(result).stringify()
+    }
+  }
+}
+
+///|
+/// Tool result for `cancel_agent_task`. Marks the task cancelled before asking
+/// the backend, so a racing completion cannot turn into a late announcement.
+async fn cancel_task_output(
+  flow : SessionFlow,
+  backend : &@ports.BackendPort?,
+  arguments : String,
+) -> String {
+  let args = tool_arguments(arguments)
+  if tool_bool_arg(args, "all") {
+    let cancelled : Array[Json] = []
+    for task_id in flow.task_order.val {
+      match flow.tasks.val.get(task_id) {
+        Some(record) if record.status == "running" => {
+          flow.task_updated(task_id, "cancelled", "", "")
+          cancelled.push(Json::string(task_id))
+        }
+        _ => ()
+      }
+    }
+    let running = flow.current_task.val
+    if running != "" {
+      match backend {
+        Some(backend) => backend.cancel(running)
+        None => ()
+      }
+    }
+    return Json::object({
+      "status": Json::string("ok"),
+      "cancelled": Json::array(cancelled),
+      "message": Json::string(
+        "已取消 " + cancelled.length().to_string() + " 项任务。",
+      ),
+    }).stringify()
+  }
+  let target = match tool_string_arg(args, "task_id") {
+    Some(task_id) => Some(task_id)
+    None => flow.latest_running_task_id()
+  }
+  match target {
+    None =>
+      Json::object({
+        "status": Json::string("none"),
+        "message": Json::string("没有正在执行的任务可以取消。"),
+      }).stringify()
+    Some(task_id) =>
+      match flow.tasks.val.get(task_id) {
+        None =>
+          Json::object({
+            "status": Json::string("not_found"),
+            "task_id": Json::string(task_id),
+            "message": Json::string("没有找到任务 " + task_id + "。"),
+          }).stringify()
+        Some(record) =>
+          if record.status == "running" {
+            flow.task_updated(task_id, "cancelled", "", "")
+            if flow.current_task.val == task_id {
+              match backend {
+                Some(backend) => backend.cancel(task_id)
+                None => ()
+              }
+            }
+            Json::object({
+              "status": Json::string("ok"),
+              "task_id": Json::string(task_id),
+              "message": Json::string("任务 " + task_id + " 已取消。"),
+            }).stringify()
+          } else {
+            Json::object({
+              "status": Json::string("noop"),
+              "task_id": Json::string(task_id),
+              "message": Json::string(
+                "任务 " + task_id + " 已经结束，不需要取消。",
+              ),
+            }).stringify()
+          }
+      }
+  }
 }
 
 ///|
@@ -928,9 +1457,10 @@ async fn tool_runner(
           job.instruction,
           job.generation,
         )
-        // An interrupt after the task ended must not produce a late
-        // announcement.
-        if flow.interrupt_generation.val != job.generation {
+        // An interrupt or an explicit cancel after the task ended must not
+        // produce a late announcement.
+        if flow.interrupt_generation.val != job.generation ||
+          flow.is_cancelled(job.task_id) {
           continue
         }
         match outcome {
@@ -958,7 +1488,7 @@ async fn handle_tool_call(
   instruction : String,
   generation : Int32,
 ) -> TaskOutcome {
-  if flow.interrupt_generation.val != generation {
+  if flow.interrupt_generation.val != generation || flow.is_cancelled(task_id) {
     flow.task_updated(task_id, "cancelled", "", "")
     return Cancelled
   }
@@ -1041,7 +1571,8 @@ async fn handle_tool_call(
   if flow.current_task.val == task_id {
     flow.current_task.val = ""
   }
-  let cancelled = flow.interrupt_generation.val != generation
+  let cancelled = flow.interrupt_generation.val != generation ||
+    flow.is_cancelled(task_id)
   if cancelled {
     flow.task_updated(task_id, "cancelled", text, step)
     Cancelled

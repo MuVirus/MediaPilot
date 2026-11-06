@@ -38,11 +38,28 @@ Browser / Native client
 | `realtime/` | provider 适配器与事件映射 | 感知客户端 wire 细节 |
 | `backend/` | `BackendPort` 与 LLM/ACP/MCP 适配器 | 感知音频传输 |
 | `audio/` | 采集、播放、重采样 | 感知会话业务 |
+| `config/` | 配置目录发现、dotenv 解析、上限解析 | 网络、会话、provider |
 | `cmd/` | 组装依赖、读配置、启动 | 业务分支 |
 
-依赖方向：`cmd → gateway/realtime/backend/audio → ports → protocol`。
-`protocol/` 不依赖任何其他包，这样它才能同时编译到 native 和 wasm。
+依赖方向：`cmd → gateway/realtime/backend/audio`，`cmd → config`；
+业务包只经由 `ports` 依赖 `protocol`。`protocol/` 与 `config/` 不依赖任何其他项目包，
+这样 `protocol/` 才能同时编译到 native 和 wasm。
 `gateway/` 与 `realtime/` 是兄弟包，互不 import，只共享 `ports/` 的 trait。
+
+## 配置与准入
+
+配置是部署细节，不是北向契约。`config/` 只负责“找到并解析”，不理解任何具体配置项；
+`cmd/main` 负责把字符串解释成 provider、backend、上限和鉴权参数。
+
+- 配置根：`MEDIAPILOT_CONFIG_DIR` > 当前目录 `.media_pilot` > 用户目录 `.media_pilot`。
+- 同一根内 `config.env` 优先；旧布局的 `.env.local` / `.env` 作为兼容输入排在后面。
+  进程环境变量最后覆盖所有文件值。
+- 启动自检在打开监听端口之前完成：缺 API key、非法 bind、非法上限、找不到 ACP 命令
+  都直接报错退出。配置里的 secrets 只存在于内存，不打印。
+- `SessionLimiter` 由一次 `serve` 共享。`session.hello` 通过版本校验后占用一个名额，
+  连接关闭时释放。超限的会话在握手阶段收到 `session_limit` 并关闭。
+- 鉴权在 WebSocket 升级前完成，`GET /api/health` 与静态资源保持开放。token 只做准入，
+  不提供用户身份或多租户隔离。
 
 ## 为什么 provider 和 gateway 要分开
 
@@ -93,6 +110,10 @@ backend。真正的执行在独立的 `tool_runner` 协程里串行进行，完�
 
 打断会推进一个会话内 generation；已受理但未开始的任务、以及被打断的当前任务都不会
 再产生迟到的结果播报。
+
+网关还向实时模型注册 `get_agent_task_status` 和 `cancel_agent_task`。前者读取会话内
+的任务记录，后者先标记 `cancelled` 再调用 backend 取消，所以与完成事件竞争时也不会
+出现迟到播报。任务记录和队列都只属于当前会话，重连不恢复。
 
 ## 背压与打断
 

@@ -30,6 +30,19 @@ test "health payload lists every capability" {
 }
 
 ///|
+test "health payload reports session usage" {
+  let limiter = @gateway.SessionLimiter::new(3)
+  assert_true(limiter.try_acquire())
+  let parsed = @json.parse(@gateway.health_json(limiter~))
+  let map = match parsed {
+    Json::Object(map) => map
+    _ => panic()
+  }
+  assert_eq(map.get("sessions"), Some(Json::number(1.0)))
+  assert_eq(map.get("maxSessions"), Some(Json::number(3.0)))
+}
+
+///|
 test "capability negotiation keeps only the intersection" {
   let negotiated = @gateway.negotiate_capabilities([
     @protocol.capability_audio_in, "future.capability",

@@ -31,6 +31,7 @@ transport, and rendering. Do not add these speculatively.
 | `realtime/` | Provider adapters (DashScope, OpenAI, Gemini, …) | `protocol/`, `ports/` |
 | `backend/` | Agent backends behind `BackendPort` (LLM, ACP, MCP) | `protocol/`, `ports/` |
 | `audio/` | Capture, playback, resampling | core only |
+| `config/` | Config directory discovery, dotenv parsing, limit parsing | core only |
 | `cmd/` | Executables and wiring | anything above |
 
 Dependencies point downward. `protocol/` must not import a transport, a
@@ -104,7 +105,10 @@ A change is done only when all of these hold:
 ## Protocol change rules
 
 1. Read `docs/contract.md` and decide: additive or breaking.
-2. Additive change → bump minor, add a capability ID, keep old clients working.
+2. Additive change → bump patch. Reserve minor bumps for coordinated
+   milestones so routine work does not walk the project toward 1.0. Add a
+   capability ID when the feature is client-visible, and keep old clients
+   working.
 3. Breaking change → bump major and state the migration in the contract.
 4. Update the MoonBit types, the client SDK/types, and the contract in the same
    change. They must never drift.

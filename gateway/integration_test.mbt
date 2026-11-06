@@ -10,6 +10,7 @@ struct FakeProvider {
   background_results : Array[String]
   mut interrupted : Bool
   tool_results : Array[(String, String, Bool)]
+  mut tools : Json?
   events : @aqueue.Queue[@ports.RealtimeEvent?]
 }
 
@@ -21,6 +22,7 @@ fn FakeProvider::new() -> FakeProvider {
     background_results: [],
     interrupted: false,
     tool_results: [],
+    tools: None,
     events: @aqueue.Queue(kind=Blocking(16)),
   }
 }
@@ -109,7 +111,10 @@ pub impl @ports.RealtimeProvider for FakeProvider with fn output_sample_rate(
 
 ///|
 fn fake_factory(provider : FakeProvider) -> @gateway.ProviderFactory {
-  fn(_session_id, _tools) { Ok(provider as &@ports.RealtimeProvider) }
+  fn(_session_id, tools) {
+    provider.tools = tools
+    Ok(provider as &@ports.RealtimeProvider)
+  }
 }
 
 ///|
@@ -127,6 +132,7 @@ struct FakeBackend {
   /// When true, `submit` waits on `gate` before producing the answer.
   mut hold : Bool
   gate : @aqueue.Queue[Unit]
+  cancelled : Array[String]
 }
 
 ///|
@@ -140,6 +146,7 @@ fn FakeBackend::new() -> FakeBackend {
     warmed: false,
     hold: false,
     gate: @aqueue.Queue(kind=Blocking(1)),
+    cancelled: [],
   }
 }
 
@@ -200,8 +207,13 @@ pub impl @ports.BackendPort for FakeBackend with fn submit(
 }
 
 ///|
-pub impl @ports.BackendPort for FakeBackend with fn cancel(_self, _task_id) {
-
+pub impl @ports.BackendPort for FakeBackend with fn cancel(self, task_id) {
+  self.cancelled.push(task_id)
+  // A held task is waiting on the gate. Releasing it lets the submission finish
+  // so the gateway can observe the cancellation instead of hanging the test.
+  if self.hold {
+    self.gate.put(())
+  }
 }
 
 ///|
@@ -932,4 +944,157 @@ async test "clients without the permission capability are denied by policy" {
     assert_eq(resolved, "deny")
     assert_eq(backend.permissions[0].1, @ports.PermissionDecision::Deny)
   })
+}
+
+///|
+async test "task tools are registered when a backend exists" {
+  let provider = FakeProvider::new()
+  let backend = FakeBackend::new()
+  with_gateway_backend(provider, Some(backend), async fn(ws) {
+    hello(ws)
+    let _ = read_event(ws)
+    match provider.tools {
+      Some(Json::Array(items)) => {
+        assert_eq(items.length(), 3)
+        let text = Json::array(items).stringify()
+        assert_true(text.contains("delegate_task"))
+        assert_true(text.contains("get_agent_task_status"))
+        assert_true(text.contains("cancel_agent_task"))
+      }
+      _ => fail("the provider did not receive the task tool list")
+    }
+  })
+}
+
+///|
+async test "status tool reports the latest completed task" {
+  let provider = FakeProvider::new()
+  let backend = FakeBackend::new()
+  with_gateway_backend(provider, Some(backend), async fn(ws) {
+    hello_with_permission(ws)
+    let _ = read_event(ws)
+    provider.push_tool_call(
+      "call-1", "delegate_task", "{\"instruction\":\"统计文件\"}",
+    )
+    let mut completed = false
+    for _ in 0..<20 {
+      match read_event(ws) {
+        Some(@protocol.ServerEvent::TaskUpdated(status~, ..)) =>
+          if status == "completed" {
+            completed = true
+            break
+          }
+        Some(_) => ()
+        None => break
+      }
+    }
+    assert_true(completed)
+    provider.push_tool_call("call-2", "get_agent_task_status", "{}")
+    for _ in 0..<20 {
+      if provider.tool_results.length() >= 2 {
+        break
+      }
+      @async.sleep(20)
+    }
+    assert_eq(provider.tool_results.length(), 2)
+    let output = provider.tool_results[1].1
+    assert_true(output.contains("\"state\":\"completed\""))
+    assert_true(output.contains("agent answer: 统计文件"))
+  })
+}
+
+///|
+async test "cancel tool stops the running task without a late announcement" {
+  let provider = FakeProvider::new()
+  let backend = FakeBackend::new()
+  backend.hold = true
+  with_gateway_backend(provider, Some(backend), async fn(ws) {
+    hello_with_permission(ws)
+    let _ = read_event(ws)
+    provider.push_tool_call(
+      "call-1", "delegate_task", "{\"instruction\":\"长任务\"}",
+    )
+    for _ in 0..<20 {
+      if backend.submitted.length() > 0 {
+        break
+      }
+      @async.sleep(20)
+    }
+    provider.push_tool_call("call-2", "cancel_agent_task", "{}")
+    let mut cancelled = false
+    for _ in 0..<20 {
+      match read_event(ws) {
+        Some(@protocol.ServerEvent::TaskUpdated(status~, ..)) =>
+          if status == "cancelled" {
+            cancelled = true
+            break
+          }
+        Some(_) => ()
+        None => break
+      }
+    }
+    assert_true(cancelled)
+    for _ in 0..<20 {
+      if provider.tool_results.length() >= 2 {
+        break
+      }
+      @async.sleep(20)
+    }
+    assert_eq(provider.tool_results.length(), 2)
+    assert_true(provider.tool_results[1].1.contains("\"status\":\"ok\""))
+    assert_eq(backend.cancelled.length(), 1)
+    assert_eq(backend.cancelled[0], "t-1")
+    @async.sleep(100)
+    assert_eq(provider.background_results.length(), 0)
+  })
+}
+
+///|
+async test "auth token accepts the query form" {
+  let provider = FakeProvider::new()
+  let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
+  let port = server.addr.port()
+  @async.with_task_group() <| group => {
+    group.spawn_bg(no_wait=true) <| () => {
+      @gateway.serve(server, fake_factory(provider), auth_token="secret")
+    }
+    @async.sleep(50)
+    let ws = @websocket.connect(
+      "ws://127.0.0.1:\{port}/api/realtime?token=secret",
+    )
+    defer ws.close()
+    hello(ws)
+    match read_event(ws) {
+      Some(@protocol.ServerEvent::Ready(..)) => ()
+      _ => fail("a valid query token should complete the handshake")
+    }
+  }
+}
+
+///|
+async test "session limit rejects a second client" {
+  let provider = FakeProvider::new()
+  let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
+  let port = server.addr.port()
+  @async.with_task_group() <| group => {
+    group.spawn_bg(no_wait=true) <| () => {
+      @gateway.serve(server, fake_factory(provider), max_sessions=1)
+    }
+    @async.sleep(50)
+    let first = @websocket.connect("ws://127.0.0.1:\{port}/api/realtime")
+    hello(first)
+    match read_event(first) {
+      Some(@protocol.ServerEvent::Ready(..)) => ()
+      _ => fail("the first session should be accepted")
+    }
+    let second = @websocket.connect("ws://127.0.0.1:\{port}/api/realtime")
+    hello(second)
+    match read_event(second) {
+      Some(@protocol.ServerEvent::Error(code~, ..)) =>
+        assert_eq(code, @protocol.ErrorCode::SessionLimit)
+      _ => fail("the second session should be rejected")
+    }
+    first.close()
+    second.close()
+  }
 }

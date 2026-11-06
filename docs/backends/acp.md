@@ -16,6 +16,13 @@ ACP（Agent Client Protocol）是编辑器与编码 agent 之间的 JSON-RPC 协
 
 参考项目对应的是 `backend/adapters/acp/*`（JSON-RPC 客户端 + 会话管理）。
 
+实现方式：MediaPilot 的 ACP client 是 `backend/acp.mbt` 里手写的 JSON-RPC over
+stdio，**没有**引入 ACP SDK。参考项目使用 TypeScript 的
+`@agentclientprotocol/sdk`；这里只实现当前需要的方法子集（`initialize`、
+`session/new`、`session/prompt`、`session/cancel`、`session/request_permission`、
+`session/set_config_option`）。ACP 新增能力时需要自己补解析和映射，不能依赖 SDK
+自动升级。
+
 ## 传输
 
 - `@process.spawn_orphan` 启动一个子进程，stdin/stdout 是管道。
@@ -143,7 +150,10 @@ MediaPilot 的配置。MediaPilot 只在 agent 发来请求时询问用户。
 ## 已知限制
 
 - 同一会话同时只跑一个任务；第二个 `delegate_task` 会立即受理并排队，等前一个结束
-  后开始。打断只会取消当前正在执行的任务，排队中的任务按 generation 丢弃。
+  后开始。队列上限由 `MEDIAPILOT_MAX_TASKS` 控制（默认 4），满了会立即返回错误结果。
+  打断只会取消当前正在执行的任务，排队中的任务按 generation 丢弃。
+- 所有网关会话共享 `MEDIAPILOT_ACP_CWD`。`MEDIAPILOT_AUTH_TOKEN` 只是准入 token，
+  不是多租户身份，不能用来隔离不同用户的工作目录。
 - 不支持 `session/load`、`session/resume`、MCP server、终端能力、文件系统能力。
 - 不解析 agent 的模型/模式配置选项；使用 agent 自身的默认值。
 - 文本按 ACP 的 chunk 转发，可能一块包含多句，也可能一句分多块；客户端不能假设边界。

@@ -1,9 +1,10 @@
 ///|
 /// The protocol version this package implements.
 ///
-/// Additive changes bump the minor; any breaking change to a client-visible
-/// event or field bumps the major. See `docs/contract.md`.
-pub let protocol_version : String = "0.6.0"
+/// Additive changes bump the patch; reserve minor bumps for coordinated
+/// milestones. Any breaking change to a client-visible event or field bumps the
+/// major. See `docs/contract.md`.
+pub let protocol_version : String = "0.6.1"
 
 ///|
 /// Capability IDs are the only stable feature check for clients.

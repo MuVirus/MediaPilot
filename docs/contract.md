@@ -4,7 +4,7 @@
 未列出的内容——内部模块路径、数据库结构、配置目录里的文件、日志格式——都不是契约，
 可以随时改变。
 
-状态：`v0.6.0`，P2 进行中。之后的协议变更必须升版本并更新此表。
+状态：`v0.6.1`，P2 已完成，P3 进行中。之后的协议变更必须升版本并更新此表。
 
 范围：当前契约只覆盖实时音频。视频复用同一会话与事件模型，P4 才进入契约。
 
@@ -17,12 +17,16 @@
 
 ```json
 {
-  "protocolVersion": "0.6.0",
-  "capabilities": ["realtime.audio-in", "realtime.audio-out"]
+  "protocolVersion": "0.6.1",
+  "capabilities": ["realtime.audio-in", "realtime.audio-out"],
+  "status": "ok",
+  "sessions": 1,
+  "maxSessions": 16
 }
 ```
 
-- 版本遵循 SemVer：新增能力升 minor，破坏任一已列端点或事件升 major。
+- `sessions` 是当前已准入的客户端会话数，`maxSessions` 是本次进程的并发上限。两者都是聚合值，不包含会话 ID、用户或来源信息。
+- 版本遵循 SemVer：兼容的增量修复或字段补充只升 patch；只有协调里程碑才升 minor；破坏任一已列端点或事件升 major。
 - 客户端按 **能力 ID** 分支，不比较产品版本号。未知能力必须降级，不能崩溃。
 - 未知事件类型必须忽略，不能断开连接。
 
@@ -37,20 +41,44 @@
 | `realtime.task` | 服务端可推送 `task.updated` 背景任务进度 | `gateway/integration_test.mbt` |
 | `realtime.permission` | 服务端可要求客户端批准后台操作 | `gateway/integration_test.mbt` |
 
-事件的 JSON 形状由 `protocol/codec_test.mbt` 锁定；`GET /api/health` 的响应形状由
-`gateway/gateway_test.mbt` 锁定。
+事件的 JSON 形状由 `protocol/codec_test.mbt` 锁定；`GET /api/health` 的响应形状
+（含 `sessions` / `maxSessions`）由 `gateway/gateway_test.mbt` 锁定；token 解析与
+`SessionLimiter` 由 `gateway/server_wbtest.mbt` 锁定，超限拒绝对端的行为由
+`gateway/integration_test.mbt` 锁定。
 
 ## 端点
 
 ### `GET /api/health`
 
-无需认证。返回 `protocolVersion`、`capabilities`、`status`。用于客户端启动时探测，
-不能用于判断具体功能是否可用——那要看能力列表。
+无需认证。返回 `protocolVersion`、`capabilities`、`status`、`sessions`、`maxSessions`。
+用于客户端启动时探测，不能用于判断具体功能是否可用——那要看能力列表。
 
 ### `WS /api/realtime`
 
 一条连接承载一个会话。文本帧是 JSON；音频只出现在 JSON 的 `data` 字段里（base64），
 不混用二进制帧，保证浏览器和原生客户端行为一致。
+
+部署可以设置 `MEDIAPILOT_AUTH_TOKEN` 打开鉴权。开启后，客户端必须在升级前提供
+同一个 token，二选一：
+
+- `Authorization: Bearer <token>`（原生客户端）
+- `?token=<token>`（浏览器无法在 WebSocket 上设置请求头）
+
+`?token=` 形式不做百分号解码，token 应只使用 URL 安全字符（字母、数字、`-`、
+`_`、`.`、`~`）。
+
+缺失或不匹配时，网关在升级前返回 HTTP `401`，不创建会话，也不连接上游。token
+不进入日志、错误消息或 `GET /api/health` 的响应。
+
+### 并发与准入
+
+`MEDIAPILOT_MAX_SESSIONS` 控制同一进程的并发会话数，默认 `16`。每个会话占用一个
+上游连接；使用 ACP backend 时还会占用一个 agent 子进程。名额在 `session.hello`
+通过校验后占用，直到连接关闭。达到上限后，新的连接仍可建立，但发送
+`session.hello` 后会收到 `error`（`code = "session_limit"`，`retryable = true`）
+然后关闭，不会创建会话。已有会话不受影响；一个会话关闭后才释放名额。
+
+客户端应用指数退避重试，不要忙轮询。
 
 ### `GET /`
 
@@ -66,7 +94,7 @@
 {
   "type": "session.hello",
   "requestId": "c-1",
-  "protocolVersion": "0.6.0",
+  "protocolVersion": "0.6.1",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"]
 }
 ```
@@ -78,7 +106,7 @@
   "type": "session.ready",
   "requestId": "c-1",
   "sessionId": "s-1",
-  "protocolVersion": "0.6.0",
+  "protocolVersion": "0.6.1",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"]
 }
 ```
@@ -153,6 +181,22 @@
 `task.updated(status=completed)` 之后的 `audio.delta` / `transcript.final` 中，
 而不是受理那一轮。任务失败时同样会有一个语音轮次说明原因；用户打断导致
 `cancelled` 时不再播报。客户端不能假设受理确认和最终结果是同一个回复。
+
+配置了 backend 时，网关还向实时模型提供两个工具：
+
+- `get_agent_task_status`：查询本会话最近的任务或指定 `taskId` 的状态，也可以
+  列出最近的任务。
+- `cancel_agent_task`：取消指定任务或当前运行中的任务；`all = true` 取消本会话
+  全部运行中和排队中的任务。
+
+它们和 `delegate_task` 一样只在网关与实时模型之间使用，不新增北向事件。用户问
+“刚才那个任务怎么样了”或“算了别做了”时，模型通过这些工具得到真实状态再回答。
+取消同样会让该任务进入 `cancelled` 终态，并且不会产生迟到的结果播报。
+`session.interrupt` 仍然优先：它取消当前运行中的任务，效果与“取消当前任务”一致。
+
+任务状态只保留在当前会话内，不跨重连恢复；重连后的新会话看不到旧任务。每个会话
+排队中的任务数受 `MEDIAPILOT_MAX_TASKS` 限制（默认 `4`），队列满时
+`delegate_task` 立即返回错误结果，而不是阻塞实时连接。
 
 ## 权限请求
 

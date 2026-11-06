@@ -1,0 +1,42 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "MuVirus/MediaPilot/config"
+
+// Values
+pub fn candidate_files(String, String, String) -> Array[String]
+
+pub fn choose_root(String, String, String?, Bool, Bool) -> String
+
+pub let config_directory_name : String
+
+pub let config_file_name : String
+
+pub fn expand_home(String, String) -> String
+
+pub fn home_directory() -> String
+
+pub fn join_path(String, String) -> String
+
+pub async fn load_config() -> LoadedConfig
+
+pub async fn load_from(String, String, String?) -> LoadedConfig
+
+pub fn parse_env_text(String) -> Array[(String, String)]
+
+pub fn parse_positive_int(String) -> Int32?
+
+pub fn strip_quotes(String) -> String
+
+// Errors
+
+// Types and methods
+pub(all) struct LoadedConfig {
+  root : String
+  files : Array[String]
+  values : Map[String, String]
+}
+pub fn LoadedConfig::get(Self, String) -> String?
+pub fn LoadedConfig::get_or(Self, String, String) -> String
+
+// Type aliases
+
+// Traits

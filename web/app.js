@@ -339,7 +339,9 @@ async function startCapture() {
 
 function socketUrl() {
   const scheme = location.protocol === "https:" ? "wss" : "ws";
-  return `${scheme}://${location.host}/api/realtime`;
+  const token = new URLSearchParams(location.search).get("token") || "";
+  const query = token ? `?token=${encodeURIComponent(token)}` : "";
+  return `${scheme}://${location.host}/api/realtime${query}`;
 }
 
 function connectSocket() {
@@ -350,7 +352,7 @@ function connectSocket() {
     send({
       type: "session.hello",
       requestId: `c-${Date.now()}`,
-      protocolVersion: "0.6.0",
+      protocolVersion: "0.6.1",
       capabilities: [
         "realtime.audio-in",
         "realtime.audio-out",

@@ -70,11 +70,22 @@ P2 已验证的事实：
 
 ## P3 — 产品化
 
-- [ ] 配置加载与校验、启动自检、缺失配置的明确报错。
+- [x] 配置加载与校验、启动自检、缺失配置的明确报错。
+- [x] 并发会话上限与资源回收。
 - [ ] 结构化日志、指标、健康检查分级。
 - [ ] 打包与分发（单文件二进制优先）。
-- [ ] 并发会话上限与资源回收。
 - [ ] 桌面壳评估（Electron/Tauri 仅作为客户端，不进入核心）。
+
+P3 已完成的事实：
+
+- 配置根按 `MEDIAPILOT_CONFIG_DIR` → 当前目录 `.media_pilot` → 用户目录
+  `.media_pilot` 查找；`config.env` 优先于旧 `.env.local` / `.env`，进程环境变量最高。
+- `cmd/main` 在监听前校验 API key、bind、并发上限、web 根目录和 ACP 命令，错误直接
+  退出，不进入半可用状态。
+- `MEDIAPILOT_MAX_SESSIONS` 默认 16，`MEDIAPILOT_MAX_TASKS` 每会话默认 4。
+- 可选 `MEDIAPILOT_AUTH_TOKEN` 在 WebSocket 升级前校验；`GET /api/health` 暴露当前
+  会话数与上限，便于部署侧判断是否接近容量。
+- 模型可以查询和取消已受理的后台任务，取消不会产生迟到播报。
 
 退出条件：非开发者按 README 能在 10 分钟内跑起来并完成一次对话。
 

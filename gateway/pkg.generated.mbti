@@ -5,14 +5,23 @@ import {
   "MuVirus/MediaPilot/ports",
   "moonbitlang/core/async/http",
   "moonbitlang/core/json",
+  "moonbitlang/core/ref",
 }
 
 // Values
+pub fn cancel_agent_task_tool() -> @json.Json
+
+pub let default_max_sessions : Int32
+
+pub let default_max_tasks_per_session : Int32
+
 pub fn delegate_task_tool() -> @json.Json
 
-pub fn health_json() -> String
+pub fn get_agent_task_status_tool() -> @json.Json
 
-pub fn health_payload() -> @json.Json
+pub fn health_json(limiter? : SessionLimiter) -> String
+
+pub fn health_payload(limiter? : SessionLimiter) -> @json.Json
 
 pub fn negotiate_capabilities(Array[String]) -> Array[String]
 
@@ -20,13 +29,24 @@ pub let outbound_capacity : Int32
 
 pub let permission_timeout_ms : Int32
 
-pub async fn run_gateway(String, async (String, @json.Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String) -> Unit
+pub async fn run_gateway(String, async (String, @json.Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String, max_sessions? : Int32, max_tasks_per_session? : Int32, auth_token? : String) -> Unit
 
-pub async fn serve(@http.Server, async (String, @json.Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String) -> Unit
+pub async fn serve(@http.Server, async (String, @json.Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String, max_sessions? : Int32, max_tasks_per_session? : Int32, auth_token? : String) -> Unit
+
+pub fn task_tools() -> Array[@json.Json]
 
 // Errors
 
 // Types and methods
+pub struct SessionLimiter {
+  max : Int32
+  active : @ref.Ref[Int32]
+}
+pub fn SessionLimiter::active(Self) -> Int32
+pub fn SessionLimiter::max(Self) -> Int32
+pub fn SessionLimiter::new(Int32) -> Self
+pub fn SessionLimiter::release(Self) -> Unit
+pub fn SessionLimiter::try_acquire(Self) -> Bool
 
 // Type aliases
 pub type BackendFactory = async (String) -> Result[&@ports.BackendPort, @ports.ProviderFailure]

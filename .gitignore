@@ -7,4 +7,5 @@ target
 .env
 .env.*
 !.env.example
+.media_pilot/
 *.log
