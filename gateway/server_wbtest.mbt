@@ -36,3 +36,42 @@ test "SessionLimiter caps concurrent sessions and releases slots" {
   assert_eq(limiter.active(), 1)
   assert_true(limiter.try_acquire())
 }
+
+///|
+test "Workspaces resolves the default and the allowlist" {
+  let workspaces = Workspaces::new(["/work/a/", "/work/b"], "/work/a")
+  assert_eq(workspaces.resolve(""), Ok("/work/a"))
+  assert_eq(workspaces.resolve("  "), Ok("/work/a"))
+  assert_eq(workspaces.resolve("/work/b"), Ok("/work/b"))
+  assert_eq(workspaces.resolve("/work/b/"), Ok("/work/b"))
+  match workspaces.resolve("/work/c") {
+    Ok(_) => fail("/work/c is not on the allowlist")
+    Err(_) => ()
+  }
+  match workspaces.resolve("/etc") {
+    Ok(_) => fail("/etc is not on the allowlist")
+    Err(_) => ()
+  }
+}
+
+///|
+test "Workspaces disabled rejects an explicit directory" {
+  let workspaces = Workspaces::disabled()
+  assert_false(workspaces.is_enabled())
+  assert_eq(workspaces.resolve(""), Ok(""))
+  match workspaces.resolve("/work/a") {
+    Ok(_) => fail("a disabled deployment must reject explicit workspaces")
+    Err(_) => ()
+  }
+}
+
+///|
+test "Workspaces payload lists the allowed directories" {
+  let workspaces = Workspaces::new(["/work/a", "/work/b"], "/work/a")
+  assert_eq(
+    workspaces.payload(),
+    @json.parse(
+      "{\"default\":\"/work/a\",\"workspaces\":[\"/work/a\",\"/work/b\"]}",
+    ),
+  )
+}

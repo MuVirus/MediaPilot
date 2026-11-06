@@ -25,6 +25,8 @@ pub let capability_task : String
 
 pub let capability_text_in : String
 
+pub let capability_workspace : String
+
 pub fn decode_client_event(String) -> ClientEvent? raise ProtocolError
 
 pub fn decode_server_event(String) -> ServerEvent? raise ProtocolError
@@ -57,7 +59,7 @@ pub impl Show for ProtocolError
 // Types and methods
 #derive(Eq, @debug.Debug)
 pub(all) enum ClientEvent {
-  Hello(request_id~ : String, protocol_version~ : String, capabilities~ : Array[String])
+  Hello(request_id~ : String, protocol_version~ : String, capabilities~ : Array[String], workspace~ : String)
   AudioAppend(data~ : String, format~ : String, sample_rate~ : Int32, channels~ : Int32)
   Text(text~ : String)
   ImageAppend(data~ : String, mime_type~ : String)
@@ -78,6 +80,7 @@ pub(all) enum ErrorCode {
   ProviderUnavailable
   ProviderAuthFailed
   SessionLimit
+  WorkspaceDenied
   InternalError
   Unknown(String)
 }
@@ -89,7 +92,7 @@ pub fn ErrorCode::to_repr(Self) -> @debug.Repr
 
 #derive(Eq, @debug.Debug)
 pub(all) enum ServerEvent {
-  Ready(request_id~ : String, session_id~ : String, protocol_version~ : String, capabilities~ : Array[String])
+  Ready(request_id~ : String, session_id~ : String, protocol_version~ : String, capabilities~ : Array[String], workspace~ : String)
   TranscriptPartial(session_id~ : String, role~ : String, text~ : String)
   TranscriptFinal(session_id~ : String, role~ : String, text~ : String)
   AudioDelta(session_id~ : String, data~ : String, format~ : String, sample_rate~ : Int32, channels~ : Int32)

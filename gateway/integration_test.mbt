@@ -247,7 +247,7 @@ pub impl @ports.BackendPort for FakeBackend with fn close(_self) {
 
 ///|
 fn fake_backend_factory(backend : FakeBackend) -> @gateway.BackendFactory {
-  fn(_session_id) { Ok(backend as &@ports.BackendPort) }
+  fn(_session_id, _workspace) { Ok(backend as &@ports.BackendPort) }
 }
 
 ///|
@@ -282,6 +282,7 @@ async fn hello(ws : @websocket.Conn) -> Unit {
         @protocol.capability_audio_in, @protocol.capability_audio_out, @protocol.capability_text_in,
         @protocol.capability_interrupt,
       ],
+      workspace="",
     ),
   )
 }
@@ -298,6 +299,7 @@ async fn hello_with_permission(ws : @websocket.Conn) -> Unit {
         @protocol.capability_audio_in, @protocol.capability_audio_out, @protocol.capability_text_in,
         @protocol.capability_interrupt, @protocol.capability_task, @protocol.capability_permission,
       ],
+      workspace="",
     ),
   )
 }
@@ -386,7 +388,12 @@ async test "unsupported major version is rejected" {
   with_gateway(provider, async fn(ws) {
     send_client(
       ws,
-      @protocol.ClientEvent::Hello(request_id="c-1", protocol_version="1.0.0", capabilities=[]),
+      @protocol.ClientEvent::Hello(
+        request_id="c-1",
+        protocol_version="1.0.0",
+        capabilities=[],
+        workspace="",
+      ),
     )
     match read_event(ws) {
       Some(@protocol.ServerEvent::Error(code~, ..)) =>
@@ -1097,4 +1104,132 @@ async test "session limit rejects a second client" {
     first.close()
     second.close()
   }
+}
+
+///|
+/// Start a gateway with workspace selection and run `body` with the port.
+async fn with_gateway_workspaces(
+  provider : FakeProvider,
+  workspaces : @gateway.Workspaces,
+  auth_token : String,
+  body : async (Int32) -> Unit,
+) -> Unit {
+  let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
+  let port = server.addr.port()
+  @async.with_task_group() <| group => {
+    group.spawn_bg(no_wait=true) <| () => {
+      @gateway.serve(server, fake_factory(provider), workspaces~, auth_token~)
+    }
+    @async.sleep(50)
+    body(port)
+  }
+}
+
+///|
+/// Handshake asking for a specific agent working directory.
+async fn hello_in(ws : @websocket.Conn, workspace : String) -> Unit {
+  send_client(
+    ws,
+    @protocol.ClientEvent::Hello(
+      request_id="c-1",
+      protocol_version=@protocol.protocol_version,
+      capabilities=[
+        @protocol.capability_audio_in, @protocol.capability_audio_out, @protocol.capability_workspace,
+      ],
+      workspace~,
+    ),
+  )
+}
+
+///|
+async test "hello accepts an allowlisted workspace and echoes it" {
+  let provider = FakeProvider::new()
+  let seen : Array[String] = []
+  let workspaces = @gateway.Workspaces::new(
+    ["/work/alpha", "/work/beta"],
+    "/work/alpha",
+  )
+  let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
+  let port = server.addr.port()
+  @async.with_task_group() <| group => {
+    group.spawn_bg(no_wait=true) <| () => {
+      @gateway.serve(server, fake_factory(provider), workspaces~, open_backend=fn(
+        _session_id,
+        workspace,
+      ) {
+        seen.push(workspace)
+        Ok(FakeBackend::new() as &@ports.BackendPort)
+      })
+    }
+    @async.sleep(50)
+    let ws = @websocket.connect("ws://127.0.0.1:\{port}/api/realtime")
+    defer ws.close()
+    hello_in(ws, "/work/beta/")
+    match read_event(ws) {
+      Some(@protocol.ServerEvent::Ready(workspace~, ..)) =>
+        assert_eq(workspace, "/work/beta")
+      _ => fail("an allowlisted workspace should be accepted")
+    }
+    assert_eq(seen, ["/work/beta"])
+  }
+}
+
+///|
+async test "hello without a workspace uses the configured default" {
+  let provider = FakeProvider::new()
+  let workspaces = @gateway.Workspaces::new(
+    ["/work/alpha", "/work/beta"],
+    "/work/alpha",
+  )
+  with_gateway_workspaces(provider, workspaces, "", async fn(port) {
+    let ws = @websocket.connect("ws://127.0.0.1:\{port}/api/realtime")
+    defer ws.close()
+    hello(ws)
+    match read_event(ws) {
+      Some(@protocol.ServerEvent::Ready(workspace~, ..)) =>
+        assert_eq(workspace, "/work/alpha")
+      _ => fail("the default workspace should be announced")
+    }
+  })
+}
+
+///|
+async test "hello rejects a workspace outside the allowlist" {
+  let provider = FakeProvider::new()
+  let workspaces = @gateway.Workspaces::new(["/work/alpha"], "/work/alpha")
+  with_gateway_workspaces(provider, workspaces, "", async fn(port) {
+    let ws = @websocket.connect("ws://127.0.0.1:\{port}/api/realtime")
+    defer ws.close()
+    hello_in(ws, "/etc")
+    match read_event(ws) {
+      Some(@protocol.ServerEvent::Error(code~, retryable~, ..)) => {
+        assert_eq(code, @protocol.ErrorCode::WorkspaceDenied)
+        assert_false(retryable)
+      }
+      _ => fail("a workspace outside the allowlist should be rejected")
+    }
+  })
+}
+
+///|
+async test "workspaces endpoint requires the configured token" {
+  let provider = FakeProvider::new()
+  let workspaces = @gateway.Workspaces::new(["/work/alpha"], "/work/alpha")
+  with_gateway_workspaces(provider, workspaces, "secret", async fn(port) {
+    let url = "http://127.0.0.1:\{port}/api/workspaces"
+    let (anonymous, _) = @http.get_text(url)
+    assert_eq(anonymous.code, 401)
+    let (authorized, body) = @http.get_text(
+      url,
+      headers=Map([("Authorization", "Bearer secret")]),
+    )
+    assert_eq(authorized.code, 200)
+    let parsed = @json.parse(body)
+    assert_eq(
+      parsed,
+      @json.parse(
+        "{\"default\":\"/work/alpha\",\"workspaces\":[\"/work/alpha\"]}",
+      ),
+    )
+  })
 }

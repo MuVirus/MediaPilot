@@ -87,6 +87,8 @@ P3 已完成的事实：
 - 可选 `MEDIAPILOT_AUTH_TOKEN` 在 WebSocket 升级前校验；`GET /api/health` 暴露当前
   会话数与上限，便于部署侧判断是否接近容量。
 - 模型可以查询和取消已受理的后台任务，取消不会产生迟到播报。
+- ACP 工作目录支持进程级白名单（`MEDIAPILOT_ACP_ROOTS`）和会话级选择；客户端通过
+  `GET /api/workspaces` 获取候选，在 `session.hello.workspace` 里选定，越界被拒绝。
 
 退出条件：非开发者按 README 能在 10 分钟内跑起来并完成一次对话。
 

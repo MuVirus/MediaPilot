@@ -10,9 +10,11 @@ pub type ProviderFactory = async (String, Json?) -> Result[
 ]
 
 ///|
-/// Opens one agent backend for a client session. `None` means the deployment
-/// has no backend and `delegate_task` is not offered to the model.
-pub type BackendFactory = async (String) -> Result[
+/// Opens one agent backend for a client session. The arguments are the session
+/// id and the resolved working directory (`""` when the deployment has none).
+/// `None` means the deployment has no backend and `delegate_task` is not offered
+/// to the model.
+pub type BackendFactory = async (String, String) -> Result[
   &@ports.BackendPort,
   @ports.ProviderFailure,
 ]
@@ -35,6 +37,7 @@ pub async fn run_gateway(
   max_sessions~ : Int32 = default_max_sessions,
   max_tasks_per_session~ : Int32 = default_max_tasks_per_session,
   auth_token~ : String = "",
+  workspaces~ : Workspaces = Workspaces::disabled(),
 ) -> Unit {
   let addr = @socket.Addr::parse(bind)
   let server = @http.Server(addr)
@@ -49,6 +52,7 @@ pub async fn run_gateway(
         max_sessions~,
         max_tasks_per_session~,
         auth_token~,
+        workspaces~,
       )
     (Some(backend), None) =>
       serve(
@@ -58,6 +62,7 @@ pub async fn run_gateway(
         max_sessions~,
         max_tasks_per_session~,
         auth_token~,
+        workspaces~,
       )
     (None, Some(root)) =>
       serve(
@@ -67,6 +72,7 @@ pub async fn run_gateway(
         max_sessions~,
         max_tasks_per_session~,
         auth_token~,
+        workspaces~,
       )
     (None, None) =>
       serve(
@@ -75,6 +81,7 @@ pub async fn run_gateway(
         max_sessions~,
         max_tasks_per_session~,
         auth_token~,
+        workspaces~,
       )
   }
 }
@@ -90,12 +97,21 @@ pub async fn serve(
   max_sessions~ : Int32 = default_max_sessions,
   max_tasks_per_session~ : Int32 = default_max_tasks_per_session,
   auth_token~ : String = "",
+  workspaces~ : Workspaces = Workspaces::disabled(),
 ) -> Unit {
   let limiter = SessionLimiter::new(max_sessions)
   server.run_forever((request, conn) => {
     let path = route_path(request.path)
     match (request.meth, path) {
       (Get, "/api/health") => handle_health(conn, limiter)
+      (Get, "/api/workspaces") =>
+        if !request_authorized(request, auth_token) {
+          respond(
+            conn, 401, "Unauthorized", "application/json", "{\"error\":\"unauthorized\"}",
+          )
+        } else {
+          respond(conn, 200, "OK", "application/json", workspaces.json())
+        }
       (Get, "/api/realtime") =>
         if !request_authorized(request, auth_token) {
           respond(
@@ -110,11 +126,12 @@ pub async fn serve(
                 open_provider,
                 limiter,
                 max_tasks_per_session,
+                workspaces,
                 open_backend=backend,
               )
             None =>
               handle_realtime(
-                request, conn, open_provider, limiter, max_tasks_per_session,
+                request, conn, open_provider, limiter, max_tasks_per_session, workspaces,
               )
           }
         }
@@ -295,6 +312,7 @@ async fn handle_realtime(
   open_provider : ProviderFactory,
   limiter : SessionLimiter,
   max_tasks_per_session : Int32,
+  workspaces : Workspaces,
   open_backend? : BackendFactory,
 ) -> Unit {
   let ws = @websocket.from_http_server(request, conn) catch {
@@ -317,11 +335,12 @@ async fn handle_realtime(
           @protocol.ClientEvent::Hello(
             request_id~,
             protocol_version~,
-            capabilities~
+            capabilities~,
+            workspace~
           )
         )
       )
-    ) => (request_id, protocol_version, capabilities)
+    ) => (request_id, protocol_version, capabilities, workspace)
     Some(Ok(_)) => {
       send_error(
         ws,
@@ -332,7 +351,7 @@ async fn handle_realtime(
       return
     }
   }
-  let (request_id, protocol_version, client_capabilities) = hello
+  let (request_id, protocol_version, client_capabilities, requested_workspace) = hello
   if !@protocol.is_compatible_version(protocol_version) {
     send_error(
       ws,
@@ -341,6 +360,13 @@ async fn handle_realtime(
       false,
     )
     return
+  }
+  let workspace = match workspaces.resolve(requested_workspace) {
+    Ok(path) => path
+    Err(message) => {
+      send_error(ws, @protocol.ErrorCode::WorkspaceDenied, message, false)
+      return
+    }
   }
   if !limiter.try_acquire() {
     send_error(
@@ -357,7 +383,7 @@ async fn handle_realtime(
   let session_id = next_session_id()
   let backend = match open_backend {
     Some(factory) =>
-      match factory(session_id) {
+      match factory(session_id, workspace) {
         Ok(backend) => Some(backend)
         Err(failure) => {
           println(
@@ -392,6 +418,7 @@ async fn handle_realtime(
       session_id~,
       protocol_version=@protocol.protocol_version,
       capabilities~,
+      workspace~,
     ),
   )
   bridge(ws, provider, session_id, capabilities, max_tasks_per_session, backend)

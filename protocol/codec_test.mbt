@@ -4,11 +4,30 @@ test "hello round trip" {
     request_id="c-1",
     protocol_version=@protocol.protocol_version,
     capabilities=[@protocol.capability_audio_in, @protocol.capability_audio_out],
+    workspace="/work/project",
   )
   let decoded = @protocol.decode_client_event(
     @protocol.encode_client_event_string(event),
   )
   assert_eq(decoded, Some(event))
+}
+
+///|
+test "hello without a workspace decodes as the default" {
+  let decoded = @protocol.decode_client_event(
+    "{\"type\":\"session.hello\",\"requestId\":\"c-1\",\"protocolVersion\":\"0.6.2\",\"capabilities\":[]}",
+  )
+  assert_eq(
+    decoded,
+    Some(
+      @protocol.ClientEvent::Hello(
+        request_id="c-1",
+        protocol_version="0.6.2",
+        capabilities=[],
+        workspace="",
+      ),
+    ),
+  )
 }
 
 ///|

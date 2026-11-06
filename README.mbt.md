@@ -53,6 +53,7 @@ moon run cmd/main --target native
 网关提供：
 
 - `GET /api/health` — 协议版本、能力列表、当前会话数与上限
+- `GET /api/workspaces` — ACP 允许的 agent 工作目录（有 token 时同样需要鉴权）
 - `WS /api/realtime` — 实时音频会话
 - `GET /` — 参考浏览器客户端（`web/`）
 
@@ -64,8 +65,27 @@ moon run cmd/main --target native
 - `MEDIAPILOT_MAX_TASKS`（默认 `4`）限制每个会话排队中的 `delegate_task` 数量。
 - 设置 `MEDIAPILOT_AUTH_TOKEN` 后，`WS /api/realtime` 要求
   `Authorization: Bearer <token>` 或 `?token=<token>`；不匹配返回 HTTP `401`。
-  浏览器客户端从地址栏读取 `?token=`。`GET /api/health` 和静态资源不需要鉴权。
-- token 只用于准入，不是多租户身份；所有会话仍共享同一套 provider 和 ACP 工作目录。
+  浏览器客户端从地址栏读取 `?token=`。`GET /api/health` 和静态资源不需要鉴权，
+  `GET /api/workspaces` 需要。
+- token 只用于准入，不是多租户身份；工作目录白名单是进程级共享的。
+
+### 选择 ACP 工作目录
+
+`MEDIAPILOT_BACKEND=acp` 时，agent 在哪个目录里执行任务由客户端在握手时选择：
+
+```env
+MEDIAPILOT_ACP_ROOTS=D:\work\alpha;D:\work\beta
+```
+
+- `;` 分隔，必须是绝对路径且启动时存在；第一项是默认目录。
+- 不配置时，白名单只有 `MEDIAPILOT_ACP_CWD`（默认进程启动目录）。
+- 客户端先请求 `GET /api/workspaces`，再把选中的值放进 `session.hello.workspace`；
+  不在列表里的值会收到 `workspace_denied` 并关闭连接。
+- 一个会话固定一个目录，会话内不能切换；换目录就是重连，旧会话的任务随连接结束。
+- 浏览器客户端顶部有目录下拉框，数据来自该端点。
+
+细节见 [docs/backends/acp.md](docs/backends/acp.md) 和
+[docs/contract.md](docs/contract.md)。
 
 ### 真实连接 DashScope（无浏览器）
 

@@ -14,6 +14,8 @@ pub fn expand_home(String, String) -> String
 
 pub fn home_directory() -> String
 
+pub fn is_absolute_path(String) -> Bool
+
 pub fn join_path(String, String) -> String
 
 pub async fn load_config() -> LoadedConfig
@@ -23,6 +25,8 @@ pub async fn load_from(String, String, String?) -> LoadedConfig
 pub fn parse_env_text(String) -> Array[(String, String)]
 
 pub fn parse_positive_int(String) -> Int32?
+
+pub fn split_list(String) -> Array[String]
 
 pub fn strip_quotes(String) -> String
 

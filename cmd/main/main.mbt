@@ -143,6 +143,51 @@ async fn main {
     Some(value) if value != "" => value
     _ => @fs.realpath(".") catch { _ => "." }
   }
+  // Workspace selection is ACP-only: the LLM backend has no filesystem view.
+  // With no explicit list the deployment keeps the old single-directory
+  // behaviour and still advertises that one directory.
+  let workspace_roots : Array[String] = if backend_kind == "acp" {
+    let configured = match loaded.get("MEDIAPILOT_ACP_ROOTS") {
+      Some(text) => @config.split_list(text)
+      None => []
+    }
+    if configured.length() == 0 {
+      [acp_cwd]
+    } else {
+      let resolved : Array[String] = []
+      for entry in configured {
+        let path = @config.expand_home(entry, @config.home_directory())
+        if !@config.is_absolute_path(path) {
+          println(
+            "[gateway] MEDIAPILOT_ACP_ROOTS entries must be absolute paths, got " +
+            entry,
+          )
+          return
+        }
+        if !(@fs.exists(path) catch { _ => false }) {
+          println(
+            "[gateway] MEDIAPILOT_ACP_ROOTS entry does not exist: " + path,
+          )
+          return
+        }
+        let real = @fs.realpath(path) catch { _ => path }
+        if !resolved.contains(real) {
+          resolved.push(real)
+        }
+      }
+      resolved
+    }
+  } else {
+    []
+  }
+  let workspaces = @gateway.Workspaces::new(
+    workspace_roots,
+    if workspace_roots.length() > 0 {
+      workspace_roots[0]
+    } else {
+      ""
+    },
+  )
   let acp_config : @backend.AcpConfig = {
     command: loaded.get_or("MEDIAPILOT_ACP_COMMAND", "opencode"),
     args: [loaded.get_or("MEDIAPILOT_ACP_MODE", "acp")],
@@ -171,6 +216,15 @@ async fn main {
     }),
   )
   println("[gateway] web=" + static_root)
+  println(
+    "[gateway] workspaces=" +
+    workspaces.roots().length().to_string() +
+    (if workspaces.is_enabled() {
+      " default=" + workspaces.default_root()
+    } else {
+      " disabled"
+    }),
+  )
   println(
     "[gateway] max sessions=" +
     max_sessions.to_string() +
@@ -206,7 +260,7 @@ async fn main {
     }
     Ok(session as &@ports.RealtimeProvider)
   }
-  let open_backend : @gateway.BackendFactory = fn(_session_id) {
+  let open_backend : @gateway.BackendFactory = fn(_session_id, workspace) {
     if backend_kind == "none" {
       return Err(@ports.ProviderFailure::{
         code: @protocol.ErrorCode::InternalError,
@@ -215,7 +269,18 @@ async fn main {
       })
     }
     if backend_kind == "acp" {
-      Ok(@backend.AcpBackend::new(acp_config) as &@ports.BackendPort)
+      let session_config : @backend.AcpConfig = {
+        command: acp_config.command,
+        args: acp_config.args,
+        cwd: if workspace != "" {
+          workspace
+        } else {
+          acp_config.cwd
+        },
+        inherit_env: acp_config.inherit_env,
+        model: acp_config.model,
+      }
+      Ok(@backend.AcpBackend::new(session_config) as &@ports.BackendPort)
     } else {
       Ok(@backend.LlmBackend::new(llm_config) as &@ports.BackendPort)
     }
@@ -228,5 +293,6 @@ async fn main {
     max_sessions~,
     max_tasks_per_session~,
     auth_token~,
+    workspaces~,
   )
 }

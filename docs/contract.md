@@ -4,7 +4,7 @@
 未列出的内容——内部模块路径、数据库结构、配置目录里的文件、日志格式——都不是契约，
 可以随时改变。
 
-状态：`v0.6.1`，P2 已完成，P3 进行中。之后的协议变更必须升版本并更新此表。
+状态：`v0.6.2`，P2 已完成，P3 进行中。之后的协议变更必须升版本并更新此表。
 
 范围：当前契约只覆盖实时音频。视频复用同一会话与事件模型，P4 才进入契约。
 
@@ -17,7 +17,7 @@
 
 ```json
 {
-  "protocolVersion": "0.6.1",
+  "protocolVersion": "0.6.2",
   "capabilities": ["realtime.audio-in", "realtime.audio-out"],
   "status": "ok",
   "sessions": 1,
@@ -40,10 +40,13 @@
 | `realtime.playback-clear` | 服务端可要求客户端停止播放已缓冲音频 | `protocol/codec_test.mbt` |
 | `realtime.task` | 服务端可推送 `task.updated` 背景任务进度 | `gateway/integration_test.mbt` |
 | `realtime.permission` | 服务端可要求客户端批准后台操作 | `gateway/integration_test.mbt` |
+| `realtime.workspace` | 客户端可在 `session.hello` 中选择网关允许的 agent 工作目录 | `gateway/integration_test.mbt` |
 
 事件的 JSON 形状由 `protocol/codec_test.mbt` 锁定；`GET /api/health` 的响应形状
 （含 `sessions` / `maxSessions`）由 `gateway/gateway_test.mbt` 锁定；token 解析与
 `SessionLimiter` 由 `gateway/server_wbtest.mbt` 锁定，超限拒绝对端的行为由
+`gateway/integration_test.mbt` 锁定。工作目录的白名单解析由
+`gateway/server_wbtest.mbt` 锁定，`GET /api/workspaces` 的鉴权与响应由
 `gateway/integration_test.mbt` 锁定。
 
 ## 端点
@@ -52,6 +55,26 @@
 
 无需认证。返回 `protocolVersion`、`capabilities`、`status`、`sessions`、`maxSessions`。
 用于客户端启动时探测，不能用于判断具体功能是否可用——那要看能力列表。
+
+### `GET /api/workspaces`
+
+返回本部署允许的 agent 工作目录。设置了 `MEDIAPILOT_AUTH_TOKEN` 时，这个端点与
+`WS /api/realtime` 使用同一个 token（`Authorization: Bearer <token>` 或
+`?token=<token>`），缺失或不匹配返回 HTTP `401`。原因很简单：响应里是文件系统
+绝对路径，不能对未准入的调用者公开。
+
+```json
+{
+  "default": "/srv/workspaces/alpha",
+  "workspaces": ["/srv/workspaces/alpha", "/srv/workspaces/beta"]
+}
+```
+
+- `workspaces` 是白名单，客户端只能从里面选；网关不接受任意路径。
+- `default` 是 `session.hello` 不传 `workspace` 时使用的目录，等于白名单第一项。
+- 没有配置工作目录，或 backend 不是 ACP 时，`workspaces` 为空数组、`default`
+  为 `""`，客户端不应发送非空 `workspace`。
+- 列表在网关启动时确定，运行期不会变化；响应不含 key、会话或用户信息。
 
 ### `WS /api/realtime`
 
@@ -94,11 +117,13 @@
 {
   "type": "session.hello",
   "requestId": "c-1",
-  "protocolVersion": "0.6.1",
-  "capabilities": ["realtime.audio-in", "realtime.audio-out"]
+  "protocolVersion": "0.6.2",
+  "capabilities": ["realtime.audio-in", "realtime.audio-out"],
+  "workspace": "/srv/workspaces/beta"
 }
 ```
 
+`workspace` 可以省略或为空字符串，表示使用 `GET /api/workspaces` 的 `default`。
 服务端回复：
 
 ```json
@@ -106,8 +131,9 @@
   "type": "session.ready",
   "requestId": "c-1",
   "sessionId": "s-1",
-  "protocolVersion": "0.6.1",
-  "capabilities": ["realtime.audio-in", "realtime.audio-out"]
+  "protocolVersion": "0.6.2",
+  "capabilities": ["realtime.audio-in", "realtime.audio-out"],
+  "workspace": "/srv/workspaces/beta"
 }
 ```
 
@@ -116,6 +142,26 @@
 - 握手前收到其他事件 → `error`，`code = "handshake_required"`。
 - 双方能力取交集；服务端只发送交集内的能力事件。
 - `requestId` 原样回传，仅用于关联，不参与业务语义。
+- `workspace` 必须是 `/api/workspaces` 列出的值；否则收到
+  `error`（`code = "workspace_denied"`，`retryable = false`）并关闭，不会创建会话。
+- `session.ready.workspace` 是服务端**解析后**的目录。未请求时应使用这里的值，
+  而不是假设它为空。
+
+### 工作目录选择
+
+工作目录决定 ACP agent 在哪个目录里读写文件、执行命令。选择发生在握手时，
+一个会话一个目录，会话内不能更换；要换目录就关闭当前连接，用新地址重连。
+
+- 候选目录由部署方通过 `MEDIAPILOT_ACP_ROOTS` 配置（`;` 分隔的绝对路径），
+  第一项同时是默认值。只配置 `MEDIAPILOT_ACP_CWD` 时，白名单只有这一项。
+- 网关启动时逐项校验：必须是绝对路径且存在，否则拒绝启动。运行期不再扫描目录。
+- 客户端只能选择白名单里的值。路径的大小写和分隔符按部署方返回的字符串原样匹配；
+  客户端应直接回传 `GET /api/workspaces` 里的值。
+- `MEDIAPILOT_BACKEND` 不是 `acp` 时没有工作目录概念：白名单为空，
+  `session.ready.workspace` 为 `""`。
+- 工作目录属于会话状态，不跨重连继承；重连后用新会话的 `workspace` 重新解析。
+- 一个进程内的会话共享白名单，但各自可以选不同目录；目录本身不会创建，也不做
+  访问控制之外的隔离（`MEDIAPILOT_AUTH_TOKEN` 是准入 token，不是多租户身份）。
 
 ## 客户端事件
 
@@ -134,7 +180,7 @@
 
 | `type` | 字段 | 含义 |
 | --- | --- | --- |
-| `session.ready` | `requestId`, `sessionId`, `protocolVersion`, `capabilities` | 握手完成 |
+| `session.ready` | `requestId`, `sessionId`, `protocolVersion`, `capabilities`, `workspace` | 握手完成 |
 | `transcript.partial` | `role`, `text` | 当前片段的累计文本（不是增量） |
 | `transcript.final` | `role`, `text` | 一段话的最终转写 |
 | `audio.delta` | `data`, `format`, `sampleRate`, `channels` | 一段可播放音频 |
@@ -292,6 +338,7 @@
 | `provider_unavailable` | 是 | 上游实时服务不可用 |
 | `provider_auth_failed` | 否 | 上游鉴权失败 |
 | `session_limit` | 是 | 并发会话超限 |
+| `workspace_denied` | 否 | 请求的工作目录不在白名单内 |
 | `internal_error` | 是 | 未分类的服务端错误 |
 
 ## 明确不在契约内

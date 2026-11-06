@@ -115,12 +115,13 @@ fn check_audio_format(map : Map[String, Json]) -> Unit raise ProtocolError {
 ///|
 pub fn encode_client_event(event : ClientEvent) -> Json {
   match event {
-    Hello(request_id~, protocol_version~, capabilities~) =>
+    Hello(request_id~, protocol_version~, capabilities~, workspace~) =>
       make_object([
         ("type", Json::string("session.hello")),
         ("requestId", Json::string(request_id)),
         ("protocolVersion", Json::string(protocol_version)),
         ("capabilities", strings_to_json(capabilities)),
+        ("workspace", Json::string(workspace)),
       ])
     AudioAppend(data~, format~, sample_rate~, channels~) =>
       make_object([
@@ -174,6 +175,7 @@ pub fn decode_client_event(input : String) -> ClientEvent? raise ProtocolError {
           request_id=string_field(map, "requestId"),
           protocol_version=version,
           capabilities=string_array_field(map, "capabilities"),
+          workspace=optional_string_field(map, "workspace"),
         ),
       )
     }
@@ -212,13 +214,20 @@ pub fn decode_client_event(input : String) -> ClientEvent? raise ProtocolError {
 ///|
 pub fn encode_server_event(event : ServerEvent) -> Json {
   match event {
-    Ready(request_id~, session_id~, protocol_version~, capabilities~) =>
+    Ready(
+      request_id~,
+      session_id~,
+      protocol_version~,
+      capabilities~,
+      workspace~
+    ) =>
       make_object([
         ("type", Json::string("session.ready")),
         ("requestId", Json::string(request_id)),
         ("sessionId", Json::string(session_id)),
         ("protocolVersion", Json::string(protocol_version)),
         ("capabilities", strings_to_json(capabilities)),
+        ("workspace", Json::string(workspace)),
       ])
     TranscriptPartial(session_id~, role~, text~) =>
       make_object([
@@ -312,6 +321,7 @@ pub fn decode_server_event(input : String) -> ServerEvent? raise ProtocolError {
           session_id=string_field(map, "sessionId"),
           protocol_version=string_field(map, "protocolVersion"),
           capabilities=string_array_field(map, "capabilities"),
+          workspace=optional_string_field(map, "workspace"),
         ),
       )
     "transcript.partial" =>

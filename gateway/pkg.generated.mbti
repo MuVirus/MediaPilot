@@ -29,9 +29,9 @@ pub let outbound_capacity : Int32
 
 pub let permission_timeout_ms : Int32
 
-pub async fn run_gateway(String, async (String, @json.Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String, max_sessions? : Int32, max_tasks_per_session? : Int32, auth_token? : String) -> Unit
+pub async fn run_gateway(String, async (String, @json.Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String, String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String, max_sessions? : Int32, max_tasks_per_session? : Int32, auth_token? : String, workspaces? : Workspaces) -> Unit
 
-pub async fn serve(@http.Server, async (String, @json.Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String, max_sessions? : Int32, max_tasks_per_session? : Int32, auth_token? : String) -> Unit
+pub async fn serve(@http.Server, async (String, @json.Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure], open_backend? : async (String, String) -> Result[&@ports.BackendPort, @ports.ProviderFailure], static_root? : String, max_sessions? : Int32, max_tasks_per_session? : Int32, auth_token? : String, workspaces? : Workspaces) -> Unit
 
 pub fn task_tools() -> Array[@json.Json]
 
@@ -48,8 +48,21 @@ pub fn SessionLimiter::new(Int32) -> Self
 pub fn SessionLimiter::release(Self) -> Unit
 pub fn SessionLimiter::try_acquire(Self) -> Bool
 
+pub struct Workspaces {
+  roots : Array[String]
+  default_root : String
+}
+pub fn Workspaces::default_root(Self) -> String
+pub fn Workspaces::disabled() -> Self
+pub fn Workspaces::is_enabled(Self) -> Bool
+pub fn Workspaces::json(Self) -> String
+pub fn Workspaces::new(Array[String], String) -> Self
+pub fn Workspaces::payload(Self) -> @json.Json
+pub fn Workspaces::resolve(Self, String) -> Result[String, String]
+pub fn Workspaces::roots(Self) -> Array[String]
+
 // Type aliases
-pub type BackendFactory = async (String) -> Result[&@ports.BackendPort, @ports.ProviderFailure]
+pub type BackendFactory = async (String, String) -> Result[&@ports.BackendPort, @ports.ProviderFailure]
 
 pub type ProviderFactory = async (String, @json.Json?) -> Result[&@ports.RealtimeProvider, @ports.ProviderFailure]
 

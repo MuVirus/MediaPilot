@@ -4,7 +4,7 @@
 /// Additive changes bump the patch; reserve minor bumps for coordinated
 /// milestones. Any breaking change to a client-visible event or field bumps the
 /// major. See `docs/contract.md`.
-pub let protocol_version : String = "0.6.1"
+pub let protocol_version : String = "0.6.2"
 
 ///|
 /// Capability IDs are the only stable feature check for clients.
@@ -37,10 +37,17 @@ pub let capability_task : String = "realtime.task"
 pub let capability_permission : String = "realtime.permission"
 
 ///|
+/// The client may ask for a specific agent working directory in
+/// `session.hello`, chosen from the list the gateway advertises at
+/// `GET /api/workspaces`. The directory is fixed for the session.
+pub let capability_workspace : String = "realtime.workspace"
+
+///|
 pub fn all_capabilities() -> Array[String] {
   [
     capability_session, capability_audio_in, capability_audio_out, capability_text_in,
     capability_interrupt, capability_playback_clear, capability_task, capability_permission,
+    capability_workspace,
   ]
 }
 
@@ -65,6 +72,9 @@ pub(all) enum ErrorCode {
   ProviderUnavailable
   ProviderAuthFailed
   SessionLimit
+  /// The requested `workspace` is not one of the directories the gateway
+  /// allows. The session is not created.
+  WorkspaceDenied
   InternalError
   Unknown(String)
 }
@@ -85,6 +95,7 @@ pub fn ErrorCode::to_code(self : ErrorCode) -> String {
     ProviderUnavailable => "provider_unavailable"
     ProviderAuthFailed => "provider_auth_failed"
     SessionLimit => "session_limit"
+    WorkspaceDenied => "workspace_denied"
     InternalError => "internal_error"
     Unknown(code) => code
   }
@@ -100,6 +111,7 @@ pub fn ErrorCode::from_code(code : String) -> ErrorCode {
     "provider_unavailable" => ProviderUnavailable
     "provider_auth_failed" => ProviderAuthFailed
     "session_limit" => SessionLimit
+    "workspace_denied" => WorkspaceDenied
     "internal_error" => InternalError
     _ => Unknown(code)
   }
@@ -109,10 +121,14 @@ pub fn ErrorCode::from_code(code : String) -> ErrorCode {
 /// An event sent by a client over `WS /api/realtime`.
 #derive(Eq, Debug)
 pub(all) enum ClientEvent {
+  /// `workspace` selects the agent working directory for this session. An
+  /// empty string asks for the deployment default. The value must match one of
+  /// the directories advertised by `GET /api/workspaces`.
   Hello(
     request_id~ : String,
     protocol_version~ : String,
-    capabilities~ : Array[String]
+    capabilities~ : Array[String],
+    workspace~ : String
   )
   AudioAppend(
     data~ : String,
@@ -139,11 +155,15 @@ pub extend ClientEvent with @moonbitlang/core/debug.Debug::{to_repr}
 /// An event sent by the gateway over `WS /api/realtime`.
 #derive(Eq, Debug)
 pub(all) enum ServerEvent {
+  /// `workspace` echoes the resolved working directory, or `""` when the
+  /// deployment does not use one. Clients must use this value, not the one
+  /// they requested, because the default is resolved server-side.
   Ready(
     request_id~ : String,
     session_id~ : String,
     protocol_version~ : String,
-    capabilities~ : Array[String]
+    capabilities~ : Array[String],
+    workspace~ : String
   )
   TranscriptPartial(session_id~ : String, role~ : String, text~ : String)
   TranscriptFinal(session_id~ : String, role~ : String, text~ : String)

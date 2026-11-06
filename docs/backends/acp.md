@@ -35,10 +35,13 @@ stdio，**没有**引入 ACP SDK。参考项目使用 TypeScript 的
 
 ```text
 initialize        { protocolVersion: 1, clientCapabilities: { fs: {readTextFile:false, writeTextFile:false}, terminal:false } }
-session/new       { cwd: <absolute>, mcpServers: [] }
+session/new       { cwd: <会话选择的工作目录>, mcpServers: [] }
 session/prompt    { sessionId, prompt: [{ type: "text", text: instruction }] }
 session/cancel    { sessionId }                     // 通知，取消进行中的 turn
 ```
+
+`cwd` 来自本会话握手时选定的工作目录（见下文“工作目录”）。子进程的启动目录与
+`session/new` 的 `cwd` 始终是同一个值。
 
 显式声明 **不支持** 文件系统与终端能力。这样 agent 用自己的工具执行操作，只在需要
 用户批准时发 `session/request_permission`；网关不替 agent 执行任何工具，也不接管
@@ -112,13 +115,14 @@ agent 没有提供匹配项时回 `{"outcome":{"outcome":"cancelled"}}`，绝不
 | `MEDIAPILOT_BACKEND` | `llm` | `acp` 启用本 adapter，`none` 关闭委派 |
 | `MEDIAPILOT_ACP_COMMAND` | `opencode` | agent 可执行文件；Windows 必须是 `.exe`，不能是 npm 的 `.cmd`/`.ps1` 包装 |
 | `MEDIAPILOT_ACP_MODE` | `acp` | 传给可执行文件的第一个参数 |
-| `MEDIAPILOT_ACP_CWD` | 进程当前目录的绝对路径 | agent 的工作目录，必须是绝对路径 |
+| `MEDIAPILOT_ACP_CWD` | 进程当前目录的绝对路径 | 未配置 `MEDIAPILOT_ACP_ROOTS` 时唯一允许的工作目录 |
+| `MEDIAPILOT_ACP_ROOTS` | 空 | `;` 分隔的绝对路径白名单；第一项是默认目录。配置后忽略 `MEDIAPILOT_ACP_CWD` |
 | `MEDIAPILOT_ACP_MODEL` | 空（用 agent 自己的默认模型） | 通过 `session/set_config_option` 选择的模型 ID |
 
 ```powershell
 $env:MEDIAPILOT_BACKEND = "acp"
 $env:MEDIAPILOT_ACP_COMMAND = "$env:APPDATA\npm\node_modules\@opencode\cli\bin\opencode.exe"
-$env:MEDIAPILOT_ACP_CWD = (Get-Location).Path
+$env:MEDIAPILOT_ACP_ROOTS = "D:\work\alpha;D:\work\beta"
 $env:MEDIAPILOT_ACP_MODEL = "deepseek/deepseek-v4-pro"
 moon run cmd/main --target native
 ```
@@ -129,6 +133,54 @@ moon run cmd/main --target native
 
 agent 自己的权限策略（例如哪些命令需要确认）由 opencode 的配置文件决定，不是
 MediaPilot 的配置。MediaPilot 只在 agent 发来请求时询问用户。
+
+## 工作目录
+
+工作目录是 ACP 唯一需要按会话变化的状态：agent 的读写和命令都在这个目录下执行。
+
+### 候选从哪来
+
+1. 配置了 `MEDIAPILOT_ACP_ROOTS` → 每一项就是候选，第一项是默认目录。
+2. 只配置了 `MEDIAPILOT_ACP_CWD` → 候选只有这一项。
+3. 都没配置 → 候选是网关进程启动目录的绝对路径，与旧行为一致。
+
+启动时逐项校验：必须是绝对路径且当前存在，否则直接报错退出。校验通过后用
+`realpath` 规范化，重复项会被去掉，顺序保持不变。运行期不再扫描文件系统，
+`GET /api/workspaces` 返回的就是这份固定列表。
+
+### 客户端怎么选
+
+```json
+{
+  "type": "session.hello",
+  "requestId": "c-1",
+  "protocolVersion": "0.6.2",
+  "capabilities": ["realtime.audio-in", "realtime.audio-out", "realtime.workspace"],
+  "workspace": "D:\\work\\beta"
+}
+```
+
+- 不传或传 `""` → 使用默认目录。
+- 传白名单里的值 → 使用该目录；`session.ready.workspace` 回传规范化后的字符串。
+- 传其他值 → `error`（`code = "workspace_denied"`，`retryable = false`）并关闭，
+  不会启动 agent 子进程。
+- 客户端应先请求 `GET /api/workspaces` 再选，不要硬编码路径。
+
+### 运行时语义
+
+- **一个会话一个目录，会话内不可换。** 换目录意味着关闭当前连接并用新的
+  `workspace` 重连；旧会话的任务会随连接关闭而取消，不会迁移到新目录。
+- **一个会话一个子进程。** 不同会话可以选不同目录，各自拥有独立的 `opencode acp`；
+  白名单是进程级共享的。
+- **不会创建目录。** 白名单只做准入判断，目录不存在会在启动校验阶段被拒绝。
+- **不是安全边界。** 白名单防止客户端随意指定路径，但 agent 仍以网关进程的身份
+  运行，能访问该身份可访问的一切。`MEDIAPILOT_AUTH_TOKEN` 是准入 token，不是
+  多租户身份；需要强隔离时应使用独立进程或容器，每个实例只配置自己的目录。
+- **非 ACP backend 没有工作目录。** `MEDIAPILOT_BACKEND=llm` 或 `none` 时，
+  `/api/workspaces` 返回空列表，`session.ready.workspace` 为 `""`。
+
+浏览器客户端在页面顶部提供目录下拉框，数据来自 `/api/workspaces`；页面带
+`?token=` 时会用同一个 token 请求该端点。
 
 ## 已验证
 
@@ -152,8 +204,9 @@ MediaPilot 的配置。MediaPilot 只在 agent 发来请求时询问用户。
 - 同一会话同时只跑一个任务；第二个 `delegate_task` 会立即受理并排队，等前一个结束
   后开始。队列上限由 `MEDIAPILOT_MAX_TASKS` 控制（默认 4），满了会立即返回错误结果。
   打断只会取消当前正在执行的任务，排队中的任务按 generation 丢弃。
-- 所有网关会话共享 `MEDIAPILOT_ACP_CWD`。`MEDIAPILOT_AUTH_TOKEN` 只是准入 token，
-  不是多租户身份，不能用来隔离不同用户的工作目录。
+- 所有会话共享同一份工作目录白名单，但每个会话固定一个目录。目录选择在握手时
+  完成，会话内不能更换；`MEDIAPILOT_AUTH_TOKEN` 只是准入 token，不是多租户身份，
+  不能隔离不同用户的工作目录。
 - 不支持 `session/load`、`session/resume`、MCP server、终端能力、文件系统能力。
 - 不解析 agent 的模型/模式配置选项；使用 agent 自身的默认值。
 - 文本按 ACP 的 chunk 转发，可能一块包含多句，也可能一句分多块；客户端不能假设边界。
@@ -165,3 +218,5 @@ MediaPilot 的配置。MediaPilot 只在 agent 发来请求时询问用户。
 | 行协议、`initialize` 参数、update 映射、权限请求解析、选项选择 | `backend/acp_wbtest.mbt` |
 | 权限请求 → 批准/拒绝/会话授权/超时降级、受理回执与后台结果播报、`send_tool_result` 的 `continue_turn` | `gateway/integration_test.mbt` |
 | `permission.request` / `permission.resolved` 的 JSON 形状 | `protocol/codec_test.mbt` |
+| 工作目录白名单解析、默认值、越界拒绝 | `gateway/server_wbtest.mbt` |
+| 握手选择目录、默认目录、`workspace_denied`、`GET /api/workspaces` 鉴权 | `gateway/integration_test.mbt` |

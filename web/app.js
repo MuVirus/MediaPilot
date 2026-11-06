@@ -27,6 +27,7 @@ const els = {
   agentState: document.getElementById("agent-state"),
   agentStep: document.getElementById("agent-step"),
   agentText: document.getElementById("agent-text"),
+  workspace: document.getElementById("workspace"),
 };
 
 let ws = null;
@@ -51,6 +52,7 @@ let permissionRequestId = "";
 let permissionTimer = null;
 let agentStartedAt = 0;
 let agentTimer = null;
+let workspaceSelectable = false;
 
 function log(message) {
   const line = `${new Date().toLocaleTimeString()} ${message}`;
@@ -77,6 +79,7 @@ function setRunning(value) {
   els.start.disabled = value;
   els.stop.disabled = !value;
   els.interrupt.disabled = !value;
+  if (els.workspace) els.workspace.disabled = value || !workspaceSelectable;
 }
 
 function base64ToBytes(base64) {
@@ -236,7 +239,9 @@ function handleServerEvent(event) {
       receivedAudioSeconds = 0;
       taskLine = "";
       hideAgent();
-      log(`ready session=${event.sessionId}`);
+      log(
+        `ready session=${event.sessionId} workspace=${event.workspace || "(none)"}`,
+      );
       refreshStatus();
       break;
     case "transcript.partial":
@@ -337,11 +342,55 @@ async function startCapture() {
   mute.connect(captureContext.destination);
 }
 
+function authToken() {
+  return new URLSearchParams(location.search).get("token") || "";
+}
+
 function socketUrl() {
   const scheme = location.protocol === "https:" ? "wss" : "ws";
-  const token = new URLSearchParams(location.search).get("token") || "";
+  const token = authToken();
   const query = token ? `?token=${encodeURIComponent(token)}` : "";
   return `${scheme}://${location.host}/api/realtime${query}`;
+}
+
+// The gateway decides which directories are allowed. The client only offers
+// those values and sends the chosen one in `session.hello`.
+async function loadWorkspaces() {
+  if (!els.workspace) return;
+  const token = authToken();
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  try {
+    const response = await fetch("/api/workspaces", { headers });
+    if (!response.ok) {
+      workspaceSelectable = false;
+      els.workspace.disabled = true;
+      log(`workspaces unavailable (HTTP ${response.status})`);
+      return;
+    }
+    const data = await response.json();
+    els.workspace.textContent = "";
+    const fallback = document.createElement("option");
+    fallback.value = "";
+    fallback.textContent = data.default ? `默认（${data.default}）` : "默认";
+    els.workspace.appendChild(fallback);
+    for (const path of data.workspaces || []) {
+      const option = document.createElement("option");
+      option.value = path;
+      option.textContent = path;
+      els.workspace.appendChild(option);
+    }
+    if (!data.workspaces || data.workspaces.length === 0) {
+      workspaceSelectable = false;
+      els.workspace.disabled = true;
+    } else {
+      workspaceSelectable = true;
+      els.workspace.disabled = running;
+    }
+  } catch (error) {
+    workspaceSelectable = false;
+    els.workspace.disabled = true;
+    log(`workspaces load failed: ${error}`);
+  }
 }
 
 function connectSocket() {
@@ -352,7 +401,7 @@ function connectSocket() {
     send({
       type: "session.hello",
       requestId: `c-${Date.now()}`,
-      protocolVersion: "0.6.1",
+      protocolVersion: "0.6.2",
       capabilities: [
         "realtime.audio-in",
         "realtime.audio-out",
@@ -361,7 +410,9 @@ function connectSocket() {
         "realtime.playback-clear",
         "realtime.task",
         "realtime.permission",
+        "realtime.workspace",
       ],
+      workspace: els.workspace ? els.workspace.value : "",
     });
     log("socket open, hello sent");
     setStatus("握手中…");
@@ -519,6 +570,8 @@ document.getElementById("allow-session").addEventListener("click", () => {
 document.getElementById("deny").addEventListener("click", () => {
   answerPermission("deny");
 });
+
+loadWorkspaces();
 
 // Debug hook for the headless smoke test and for manual poking in devtools.
 // Not part of the gateway contract.
