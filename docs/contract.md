@@ -186,7 +186,8 @@
   `session.hello.workspace`。
 - 服务端在握手时校验：绝对路径、存在、是目录。通过后使用 `realpath` 规范化，
   并把它作为 `session.ready.workspace` 返回。
-- `MEDIAPILOT_ACP_CWD` 是默认目录，必须是绝对路径且启动时存在，否则拒绝启动。
+- `MEDIAPILOT_ACP_CWD` 是 agent 的默认目录，与 MediaPilot 自身的启动目录无关；
+  它必须是绝对路径且启动时存在，否则拒绝启动。未设置时才回退到启动目录。
 - `MEDIAPILOT_BACKEND` 不是 `acp` 时没有工作目录概念：`enabled` 为 `false`，
   `session.ready.workspace` 为 `""`，非空请求会被拒绝。
 - 工作目录属于会话状态，不跨重连继承；重连后用新会话的 `workspace` 重新解析。

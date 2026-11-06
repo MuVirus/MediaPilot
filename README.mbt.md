@@ -74,11 +74,14 @@ moon run cmd/main --target native
 
 `MEDIAPILOT_BACKEND=acp` 时，agent 在哪个目录里执行任务由客户端在握手时选择：
 
-- 默认目录是 `MEDIAPILOT_ACP_CWD`，未设置时为网关进程启动目录。它必须是绝对路径
-  且启动时存在，否则网关拒绝启动。
+- **agent 的工作目录与 MediaPilot 自身的启动目录是两件事。** 配置查找、
+  `MEDIAPILOT_WEB_ROOT` 仍以启动目录为基准；agent 只在 `MEDIAPILOT_ACP_CWD`
+  指定的目录里读写文件。把 agent 放在别的目录不需要移动 MediaPilot。
+- 默认目录是 `MEDIAPILOT_ACP_CWD`；只有未设置时才回退到网关进程启动目录。它必须
+  是绝对路径且启动时存在，否则网关拒绝启动。
 - 客户端通过 `GET /api/fs/roots` 获取起点（Windows 盘符或 `/`），用
   `GET /api/fs/list?path=` 逐级浏览，最后把选中的绝对路径放进
-  `session.hello.workspace`。
+  `session.hello.workspace`。每个会话可以选不同目录，覆盖上面的默认值。
 - 浏览范围是整个文件系统，没有白名单；路径必须存在且是目录，否则收到
   `workspace_denied` 并关闭连接。
 - 一个会话固定一个目录，会话内不能切换；换目录就是重连，旧会话的任务随连接结束。

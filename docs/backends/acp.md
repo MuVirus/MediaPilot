@@ -126,6 +126,10 @@ $env:MEDIAPILOT_ACP_MODEL = "deepseek/deepseek-v4-pro"
 moon run cmd/main --target native
 ```
 
+例如从 `D:\File\Project\Agent\MediaPilot` 启动网关，但让 agent 在
+`D:\agents\workspace` 里工作，只需要设置 `MEDIAPILOT_ACP_CWD=D:\agents\workspace`；
+MediaPilot 的配置发现、静态文件路径不会跟着变。
+
 `MEDIAPILOT_ACP_MODEL` 不是必须的，但 agent 的默认模型可能不可用。opencode 的
 默认模型由它自己的配置和远端目录决定，MediaPilot 不猜；要让语音任务稳定，显式选一个
 可用模型更可靠。
@@ -139,7 +143,10 @@ MediaPilot 的配置。MediaPilot 只在 agent 发来请求时询问用户。
 
 ### 默认目录与可浏览范围
 
-- 默认目录来自 `MEDIAPILOT_ACP_CWD`；未配置时是网关进程启动目录的绝对路径。
+- **agent 工作目录独立于 MediaPilot 的启动目录。** 配置文件的查找、`MEDIAPILOT_WEB_ROOT`
+  等仍以 MediaPilot 的启动目录为基准；agent 只在 `MEDIAPILOT_ACP_CWD` 指定的目录
+  里工作。两者可以完全不同。
+- 默认目录来自 `MEDIAPILOT_ACP_CWD`；未配置时才是网关进程启动目录的绝对路径。
 - 启动时校验：必须是绝对路径且存在，否则直接报错退出。校验通过后用 `realpath`
   规范化。
 - 浏览范围是整个文件系统，没有白名单。`GET /api/fs/roots` 返回盘符（Windows）或
